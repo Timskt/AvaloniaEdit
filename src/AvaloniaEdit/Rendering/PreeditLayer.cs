@@ -85,6 +85,23 @@ namespace AvaloniaEdit.Rendering
             drawingContext.DrawLine(pen,
                 new Point(origin.X, origin.Y + height - 1),
                 new Point(origin.X + width, origin.Y + height - 1));
+
+            // Draw cursor within preedit text when cursorOffset is specified
+            if (_cursorOffset.HasValue && _cursorOffset.Value >= 0 && _cursorOffset.Value <= _preeditText.Length)
+            {
+                var prefixText = _preeditText.Substring(0, _cursorOffset.Value);
+                var prefixLayout = new TextLayout(
+                    prefixText,
+                    typeface,
+                    fontRenderingEmSize,
+                    foreground,
+                    textWrapping: TextWrapping.NoWrap);
+                var cursorX = origin.X + prefixLayout.WidthIncludingTrailingWhitespace;
+                var cursorPen = new ImmutablePen(foreground.ToImmutable(), 2);
+                drawingContext.DrawLine(cursorPen,
+                    new Point(cursorX, origin.Y),
+                    new Point(cursorX, origin.Y + height));
+            }
         }
     }
 }
