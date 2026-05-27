@@ -514,8 +514,14 @@ namespace AvaloniaEdit.Editing
                 string text = null;
                 try
                 {
-                    var data = await TopLevel.GetTopLevel(textArea)?.Clipboard?.TryGetDataAsync();
-                    text = await data.TryGetTextAsync();
+                    var topLevel = TopLevel.GetTopLevel(textArea);
+                    if (topLevel?.Clipboard == null)
+                    {
+                        textArea.Document.EndUpdate();
+                        return;
+                    }
+                    var data = await topLevel.Clipboard.TryGetDataAsync();
+                    text = data != null ? await data.TryGetTextAsync() : null;
                 }
                 catch (Exception)
                 {
@@ -753,8 +759,7 @@ namespace AvaloniaEdit.Editing
 
         private static void OnConvertToTitleCase(object target, ExecutedRoutedEventArgs args)
         {
-            throw new NotSupportedException();
-            //ConvertCase(CultureInfo.CurrentCulture.TextInfo.ToTitleCase, target, args);
+            ConvertCase(CultureInfo.CurrentCulture.TextInfo.ToTitleCase, target, args);
         }
 
         private static void OnInvertCase(object target, ExecutedRoutedEventArgs args)
@@ -764,13 +769,12 @@ namespace AvaloniaEdit.Editing
 
         private static string InvertCase(string text)
         {
-            // TODO: culture
-            //var culture = CultureInfo.CurrentCulture;
+            var culture = CultureInfo.CurrentCulture;
             var buffer = text.ToCharArray();
             for (var i = 0; i < buffer.Length; ++i)
             {
                 var c = buffer[i];
-                buffer[i] = char.IsUpper(c) ? char.ToLower(c) : char.ToUpper(c);
+                buffer[i] = char.IsUpper(c) ? char.ToLower(c, culture) : char.ToUpper(c, culture);
             }
             return new string(buffer);
         }

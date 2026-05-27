@@ -104,10 +104,10 @@ namespace AvaloniaEdit.Utils
         /// <returns>The file content as string.</returns>
         public static string ReadFileContent(string fileName, Encoding defaultEncoding)
         {
-            throw new NotImplementedException();
-            //using (FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read)) {
-            //	return ReadFileContent(fs, defaultEncoding);
-            //}
+            using (FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                return ReadFileContent(fs, defaultEncoding);
+            }
         }
 
         /// <summary>
@@ -119,17 +119,20 @@ namespace AvaloniaEdit.Utils
         /// <see cref="StreamReader.CurrentEncoding"/> to get the encoding that was used.</returns>
         public static StreamReader OpenFile(string fileName, Encoding defaultEncoding)
         {
-            throw new NotImplementedException();
-            //if (fileName == null)
-            //	throw new ArgumentNullException("fileName");
-            //FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
-            //try {
-            //	return OpenStream(fs, defaultEncoding);
-            //	// don't use finally: the stream must be kept open until the StreamReader closes it
-            //} catch {
-            //	fs.Dispose();
-            //	throw;
-            //}
+            if (fileName == null)
+                throw new ArgumentNullException(nameof(fileName));
+
+            FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
+            try
+            {
+                return OpenStream(fs, defaultEncoding);
+                // don't use finally: the stream must be kept open until the StreamReader closes it
+            }
+            catch
+            {
+                fs.Dispose();
+                throw;
+            }
         }
 
         /// <summary>

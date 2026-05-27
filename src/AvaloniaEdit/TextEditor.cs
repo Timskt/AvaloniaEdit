@@ -1099,11 +1099,10 @@ namespace AvaloniaEdit
             if (fileName == null)
                 throw new ArgumentNullException(nameof(fileName));
 
-            // TODO:load
-            //using (FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read))
-            //{
-            //    Load(fs);
-            //}
+            using (FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                Load(fs);
+            }
         }
 
         /// <summary>
@@ -1153,11 +1152,11 @@ namespace AvaloniaEdit
         {
             if (fileName == null)
                 throw new ArgumentNullException(nameof(fileName));
-            // TODO: save
-            //using (FileStream fs = new FileStream(fileName, FileMode.Create, FileAccess.Write, FileShare.None))
-            //{
-            //    Save(fs);
-            //}
+
+            using (FileStream fs = new FileStream(fileName, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                Save(fs);
+            }
         }
         #endregion
 

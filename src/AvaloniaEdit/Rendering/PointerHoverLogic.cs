@@ -144,6 +144,7 @@ namespace AvaloniaEdit.Rendering
                 _target.PointerExited -= OnPointerLeave;
                 _target.PointerMoved -= OnPointerMoved;
                 _target.PointerEntered -= OnPointerEnter;
+                StopHovering();
             }
             _disposed = true;
         }

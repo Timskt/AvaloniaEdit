@@ -132,7 +132,7 @@ namespace AvaloniaEdit.Search
 
         public void SetSearchResultsBrush(IBrush brush)
         {
-            if (_renderer == null)
+            if (_renderer == null || _textEditor == null)
                 return;
 
             _renderer.MarkerBrush = brush;
@@ -358,10 +358,10 @@ namespace AvaloniaEdit.Search
 
         TextBox GetFocusedTextBox()
         {
-            if (_searchTextBox.IsFocused)
+            if (_searchTextBox != null && _searchTextBox.IsFocused)
                 return _searchTextBox;
 
-            if (_replaceTextBox.IsFocused)
+            if (_replaceTextBox != null && _replaceTextBox.IsFocused)
                 return _replaceTextBox;
 
             return null;
@@ -468,9 +468,16 @@ namespace AvaloniaEdit.Search
                                  _renderer.CurrentResults.FirstSegment;
 
                     if (result != null)
+                    {
                         SelectResult(result);
-
-                    _currentSearchResultIndex = _renderer.CurrentResults.Count - 1;
+                        _currentSearchResultIndex = 0;
+                        foreach (var segment in _renderer.CurrentResults)
+                        {
+                            if (segment == result)
+                                break;
+                            _currentSearchResultIndex++;
+                        }
+                    }
                 }
             }
 
