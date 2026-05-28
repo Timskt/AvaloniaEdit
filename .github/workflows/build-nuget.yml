@@ -1,0 +1,65 @@
+name: Build and Publish NuGet
+
+on:
+  push:
+    branches:
+      - master
+      - feature/avalonia11-ime
+      - feature/avalonia12-ime
+      - bugfixes/enhancements
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore src/AvaloniaEdit/AvaloniaEdit.csproj
+
+      - name: Build
+        run: dotnet build src/AvaloniaEdit/AvaloniaEdit.csproj -c Release --no-restore
+
+      - name: Pack
+        run: dotnet pack src/AvaloniaEdit/AvaloniaEdit.csproj -c Release --no-build -o ./nupkgs
+
+      - name: Upload NuGet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg-${{ matrix.os }}-${{ github.ref_name }}
+          path: ./nupkgs/*.nupkg
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nupkg-*
+          merge-multiple: true
+          path: ./nupkgs
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          files: ./nupkgs/*.nupkg
+          generate_release_notes: true
