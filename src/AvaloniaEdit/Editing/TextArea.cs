@@ -1332,6 +1332,7 @@ namespace AvaloniaEdit.Editing
             {
                 _preeditText = null;
                 _preeditLayer?.Clear();
+                _textArea?.Caret.Show();
             }
 
             private void Caret_PositionChanged(object sender, EventArgs e)
@@ -1365,8 +1366,12 @@ namespace AvaloniaEdit.Editing
                 if (string.IsNullOrEmpty(text))
                 {
                     _preeditLayer.Clear();
+                    _textArea.Caret.Show();
                     return;
                 }
+
+                // Hide the blinking caret during IME composition - PreeditLayer draws its own cursor
+                _textArea.Caret.Hide();
 
                 // Get the caret rectangle in document coordinates
                 var caretRect = _textArea.Caret.CalculateCaretRectangle();
