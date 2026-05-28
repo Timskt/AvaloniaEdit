@@ -37,10 +37,15 @@ jobs:
       - name: Pack
         run: dotnet pack src/AvaloniaEdit/AvaloniaEdit.csproj -c Release --no-build -o ./nupkgs
 
+      - name: Sanitize branch name
+        id: sanitize
+        shell: bash
+        run: echo "branch=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> $GITHUB_OUTPUT
+
       - name: Upload NuGet package
         uses: actions/upload-artifact@v4
         with:
-          name: nupkg-${{ matrix.os }}-${{ github.ref_name }}
+          name: nupkg-${{ matrix.os }}-${{ steps.sanitize.outputs.branch }}
           path: ./nupkgs/*.nupkg
 
   publish:

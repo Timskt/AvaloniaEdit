@@ -510,45 +510,41 @@ namespace AvaloniaEdit.Editing
             if (textArea?.Document != null)
             {
                 textArea.Document.BeginUpdate();
-
-                string text = null;
                 try
                 {
-                    var topLevel = TopLevel.GetTopLevel(textArea);
-                    if (topLevel?.Clipboard == null)
+                    string text = null;
+                    try
                     {
-                        textArea.Document.EndUpdate();
+                        var topLevel = TopLevel.GetTopLevel(textArea);
+                        if (topLevel?.Clipboard == null)
+                            return;
+                        var data = await topLevel.Clipboard.TryGetDataAsync();
+                        text = data != null ? await data.TryGetTextAsync() : null;
+                    }
+                    catch (Exception)
+                    {
                         return;
                     }
-                    var data = await topLevel.Clipboard.TryGetDataAsync();
-                    text = data != null ? await data.TryGetTextAsync() : null;
+
+                    if (text == null)
+                        return;
+
+                    text = GetTextToPaste(text, textArea);
+
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        textArea.ReplaceSelectionWithText(text);
+                    }
+
+                    textArea.Caret.BringCaretToView();
+                    args.Handled = true;
+
+                    textArea.OnTextPasted(new TextEventArgs(text));
                 }
-                catch (Exception)
+                finally
                 {
                     textArea.Document.EndUpdate();
-                    return;
                 }
-
-                if (text == null)
-                {
-                    textArea.Document.EndUpdate();
-                    return;
-                }
-
-
-                text = GetTextToPaste(text, textArea);
-
-                if (!string.IsNullOrEmpty(text))
-                {
-                    textArea.ReplaceSelectionWithText(text);
-                }
-
-                textArea.Caret.BringCaretToView();
-                args.Handled = true;
-
-                textArea.Document.EndUpdate();
-
-                textArea.OnTextPasted(new TextEventArgs(text));
             }
         }
 
