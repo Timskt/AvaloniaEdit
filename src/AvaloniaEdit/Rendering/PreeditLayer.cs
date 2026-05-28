@@ -86,10 +86,11 @@ namespace AvaloniaEdit.Rendering
                 new Point(origin.X, origin.Y + height - 1),
                 new Point(origin.X + width, origin.Y + height - 1));
 
-            // Draw cursor within preedit text when cursorOffset is specified
-            if (_cursorOffset.HasValue && _cursorOffset.Value >= 0 && _cursorOffset.Value <= _preeditText.Length)
+            // Draw cursor within preedit text: use cursorOffset if specified, otherwise at end
+            var effectiveCursorOffset = _cursorOffset ?? _preeditText.Length;
+            if (effectiveCursorOffset >= 0 && effectiveCursorOffset <= _preeditText.Length)
             {
-                var prefixText = _preeditText.Substring(0, _cursorOffset.Value);
+                var prefixText = _preeditText.Substring(0, effectiveCursorOffset);
                 var prefixLayout = new TextLayout(
                     prefixText,
                     typeface,
