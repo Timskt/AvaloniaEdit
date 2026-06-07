@@ -47,6 +47,16 @@ namespace AvaloniaEdit.Rendering
         public Uri NavigateUri { get; set; }
 
         /// <summary>
+        /// Gets/Sets the original text matched as a link.
+        /// </summary>
+        public string MatchedText { get; set; }
+
+        /// <summary>
+        /// Gets/Sets an application-defined link kind, for example "url", "email", "ip" or "internal".
+        /// </summary>
+        public string LinkKind { get; set; }
+
+        /// <summary>
         /// Gets/Sets the window name where the URL will be opened.
         /// </summary>
         public string TargetName { get; set; }
@@ -70,9 +80,18 @@ namespace AvaloniaEdit.Rendering
 		/// <inheritdoc/>
 		public override TextRun CreateTextRun(int startVisualColumn, ITextRunConstructionContext context)
 		{
-			this.TextRunProperties.SetForegroundBrush(context.TextView.LinkTextForegroundBrush);
-			this.TextRunProperties.SetBackgroundBrush(context.TextView.LinkTextBackgroundBrush);
-			if (context.TextView.LinkTextUnderline)
+			var style = context.TextView.GetLinkTextStyle(new LinkTextStyleContext(
+				context.TextView,
+				NavigateUri,
+				MatchedText,
+				LinkKind,
+				this));
+
+			if (style.ForegroundBrush != null)
+				this.TextRunProperties.SetForegroundBrush(style.ForegroundBrush);
+			if (style.BackgroundBrush != null)
+				this.TextRunProperties.SetBackgroundBrush(style.BackgroundBrush);
+			if (style.Underline == true)
 				this.TextRunProperties.SetTextDecorations(TextDecorations.Underline);
 			return base.CreateTextRun(startVisualColumn, context);
 		}
@@ -109,7 +128,21 @@ namespace AvaloniaEdit.Rendering
         {
             if (!e.Handled && LinkIsClickable(e.KeyModifiers))
             {
-                var eventArgs = new OpenUriRoutedEventArgs(NavigateUri) { RoutedEvent = OpenUriEvent };
+                var linkClickedArgs = new LinkTextClickedEventArgs(
+                    NavigateUri,
+                    MatchedText,
+                    LinkKind,
+                    TargetName,
+                    e);
+
+                ParentVisualLine.TextView.RaiseLinkTextClicked(linkClickedArgs);
+                if (linkClickedArgs.Handled)
+                {
+                    e.Handled = true;
+                    return;
+                }
+
+                var eventArgs = new OpenUriRoutedEventArgs(NavigateUri, MatchedText, LinkKind, TargetName) { RoutedEvent = OpenUriEvent };
 
                 if(e.Source is Interactive interactive)
                 {
@@ -126,6 +159,8 @@ namespace AvaloniaEdit.Rendering
             return new VisualLineLinkText(ParentVisualLine, length)
             {
                 NavigateUri = NavigateUri,
+                MatchedText = MatchedText,
+                LinkKind = LinkKind,
                 TargetName = TargetName,
                 RequireControlModifierForClick = RequireControlModifierForClick
             };
@@ -154,9 +189,78 @@ namespace AvaloniaEdit.Rendering
     {
         public Uri Uri { get; }
 
+        public string Text { get; }
+
+        public string LinkKind { get; }
+
+        public string TargetName { get; }
+
         public OpenUriRoutedEventArgs(Uri uri)
+            : this(uri, null, null, null)
+        {
+        }
+
+        public OpenUriRoutedEventArgs(Uri uri, string text, string linkKind, string targetName)
         {
             Uri = uri ?? throw new ArgumentNullException(nameof(uri));
+            Text = text;
+            LinkKind = linkKind;
+            TargetName = targetName;
         }
+    }
+
+    public sealed class LinkTextStyle
+    {
+        public IBrush ForegroundBrush { get; set; }
+
+        public IBrush BackgroundBrush { get; set; }
+
+        public bool? Underline { get; set; }
+    }
+
+    public sealed class LinkTextStyleContext
+    {
+        public LinkTextStyleContext(TextView textView, Uri uri, string text, string linkKind, VisualLineLinkText linkText)
+        {
+            TextView = textView ?? throw new ArgumentNullException(nameof(textView));
+            Uri = uri;
+            Text = text;
+            LinkKind = linkKind;
+            LinkText = linkText ?? throw new ArgumentNullException(nameof(linkText));
+        }
+
+        public TextView TextView { get; }
+
+        public Uri Uri { get; }
+
+        public string Text { get; }
+
+        public string LinkKind { get; }
+
+        public VisualLineLinkText LinkText { get; }
+    }
+
+    public sealed class LinkTextClickedEventArgs : EventArgs
+    {
+        public LinkTextClickedEventArgs(Uri uri, string text, string linkKind, string targetName, PointerPressedEventArgs pointerEventArgs)
+        {
+            Uri = uri ?? throw new ArgumentNullException(nameof(uri));
+            Text = text;
+            LinkKind = linkKind;
+            TargetName = targetName;
+            PointerEventArgs = pointerEventArgs;
+        }
+
+        public Uri Uri { get; }
+
+        public string Text { get; }
+
+        public string LinkKind { get; }
+
+        public string TargetName { get; }
+
+        public PointerPressedEventArgs PointerEventArgs { get; }
+
+        public bool Handled { get; set; }
     }
 }

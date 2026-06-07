@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -63,7 +64,11 @@ namespace AvaloniaEdit.Demo
             _textEditor.TextArea.Background = this.Background;
             _textEditor.TextArea.TextEntered += textEditor_TextArea_TextEntered;
             _textEditor.TextArea.TextEntering += textEditor_TextArea_TextEntering;
+            _textEditor.TextArea.KeyDown += TextArea_KeyDown;
             _textEditor.Options.AllowToggleOverstrikeMode = true;
+            _textEditor.Options.EnableHyperlinks = true;
+            _textEditor.Options.EnableEmailHyperlinks = true;
+            _textEditor.Options.RequireControlModifierForHyperlinkClick = false;
             _textEditor.Options.EnableTextDragDrop = true;
             _textEditor.Options.ShowBoxForControlCharacters = true;
             _textEditor.Options.ColumnRulerPositions = new List<int>() { 80, 100 };
@@ -89,11 +94,17 @@ namespace AvaloniaEdit.Demo
             _insertSnippetButton.Click += InsertSnippetButton_Click;
 
             _textEditor.TextArea.TextView.ElementGenerators.Add(_generator);
+            _textEditor.TextArea.TextView.AnimateInlineObjectPlacement = true;
+            _textEditor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(120);
+            _textEditor.TextArea.TextView.ElementGenerators.Add(LinkElementGenerator.CreateIpAddressGenerator());
+            _textEditor.TextArea.TextView.LinkTextStyleSelector = CreateLinkTextStyle;
+            _textEditor.TextArea.TextView.LinkTextClicked += TextView_LinkTextClicked;
             _richTextInputManager = RichTextInputManager.Install(_textEditor.TextArea);
             _richTextInputManager.MaxInlineElementWidth = 240;
             _richTextInputManager.MaxImageWidth = 190;
             _richTextInputManager.MaxImageHeight = 130;
             _richTextInputManager.ElementFactory = CreateRichTextInputElement;
+            _richTextInputManager.PasteHandler = RichTextInputManager_PasteHandler;
 
             _lineContentAlignmentCombo = this.FindControl<ComboBox>("lineContentAlignmentCombo");
             _lineContentAlignmentCombo.ItemsSource = Enum.GetValues(typeof(LineContentVerticalAlignment));
@@ -317,6 +328,48 @@ namespace AvaloniaEdit.Demo
             return Math.Min(_richTextInputManager.MaxInlineElementWidth, Math.Max(_richTextInputManager.MinInlineElementWidth, width - 40));
         }
 
+        private LinkTextStyle CreateLinkTextStyle(LinkTextStyleContext context)
+        {
+            if (context.LinkKind == "ip")
+            {
+                return new LinkTextStyle
+                {
+                    ForegroundBrush = new SolidColorBrush(Color.FromRgb(217, 119, 6)),
+                    BackgroundBrush = Brushes.Transparent,
+                    Underline = false
+                };
+            }
+
+            if (context.LinkKind == "email")
+            {
+                return new LinkTextStyle
+                {
+                    ForegroundBrush = new SolidColorBrush(Color.FromRgb(5, 150, 105)),
+                    BackgroundBrush = Brushes.Transparent,
+                    Underline = true
+                };
+            }
+
+            return new LinkTextStyle
+            {
+                ForegroundBrush = new SolidColorBrush(Color.FromRgb(37, 99, 235)),
+                BackgroundBrush = Brushes.Transparent,
+                Underline = true
+            };
+        }
+
+        private void TextView_LinkTextClicked(object sender, LinkTextClickedEventArgs e)
+        {
+            if (e.LinkKind == "ip")
+            {
+                _statusTextBlock.Text = $"IP clicked: {e.Text}";
+                e.Handled = true;
+                return;
+            }
+
+            _statusTextBlock.Text = $"Link clicked: {e.Text}";
+        }
+
         private void Caret_PositionChanged(object sender, EventArgs e)
         {
             _statusTextBlock.Text = string.Format("Line {0} Column {1}",
@@ -479,6 +532,52 @@ namespace AvaloniaEdit.Demo
                 });
 
                 _insightWindow.Show();
+            }
+
+            UpdateMentionTriggerStatus();
+        }
+
+        private void TextArea_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeySymbol == "@")
+                _statusTextBlock.Text = "Mention trigger key pressed";
+        }
+
+        private Task RichTextInputManager_PasteHandler(RichTextPasteContext context)
+        {
+            if (context.DataObject.Contains(RichTextInputManager.RichTextClipboardFormat)
+                || context.DataObject.Contains(DataFormats.Files)
+                || context.DataObject.Contains(DataFormats.FileNames))
+            {
+                context.UseDefault();
+                return Task.CompletedTask;
+            }
+
+            var text = context.DataObject.Get(DataFormats.Text) as string;
+            if (text == null)
+            {
+                context.UseDefault();
+                return Task.CompletedTask;
+            }
+
+            context.InsertText(text);
+            Avalonia.Threading.Dispatcher.UIThread.Post(UpdateMentionTriggerStatus);
+            return Task.CompletedTask;
+        }
+
+        private void UpdateMentionTriggerStatus()
+        {
+            if (_richTextInputManager.TryGetTextTrigger(
+                new RichTextTextTriggerOptions
+                {
+                    Trigger = '@',
+                    IsQueryCharacter = c => char.IsLetterOrDigit(c) || c == '_' || c == '-',
+                    MaxQueryLength = 32
+                },
+                out var match))
+            {
+                var anchor = _richTextInputManager.GetCaretAnchorRect();
+                _statusTextBlock.Text = $"Mention trigger: @{match.Query} at {anchor.X:0},{anchor.Bottom:0}";
             }
         }
 

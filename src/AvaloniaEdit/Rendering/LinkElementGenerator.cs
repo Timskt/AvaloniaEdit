@@ -39,7 +39,14 @@ namespace AvaloniaEdit.Rendering
 		// try to detect email addresses
 		internal readonly static Regex DefaultMailRegex = new Regex(@"\b[\w\d\.\-\+]+\@[\w\d\.\-]+\.[a-z]{2,6}\b");
 
+		/// <summary>
+		/// Gets the default IPv4 address regex.
+		/// </summary>
+		public readonly static Regex DefaultIpAddressRegex = new Regex(@"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b");
+
 		private readonly Regex _linkRegex;
+		private readonly Func<Match, Uri> _uriFactory;
+		private readonly string _linkKind;
 
 		/// <summary>
 		/// Gets/Sets whether the user needs to press Control to click the link.
@@ -53,6 +60,7 @@ namespace AvaloniaEdit.Rendering
 		public LinkElementGenerator()
 		{
 			_linkRegex = DefaultLinkRegex;
+			_linkKind = "url";
 			RequireControlModifierForClick = true;
 		}
 
@@ -62,6 +70,27 @@ namespace AvaloniaEdit.Rendering
 		protected LinkElementGenerator(Regex regex) : this()
 		{
 			_linkRegex = regex ?? throw new ArgumentNullException(nameof(regex));
+		}
+
+		/// <summary>
+		/// Creates a link generator for IPv4 addresses.
+		/// </summary>
+		public static LinkElementGenerator CreateIpAddressGenerator(Func<string, Uri> uriFactory = null, string linkKind = "ip")
+		{
+			return new LinkElementGenerator(
+				DefaultIpAddressRegex,
+				match => uriFactory?.Invoke(match.Value) ?? new Uri("im://ip/" + match.Value),
+				linkKind);
+		}
+
+		/// <summary>
+		/// Creates a link generator using the specified regex, URI factory and application-defined link kind.
+		/// </summary>
+		public LinkElementGenerator(Regex regex, Func<Match, Uri> uriFactory, string linkKind = null)
+			: this(regex)
+		{
+			_uriFactory = uriFactory ?? throw new ArgumentNullException(nameof(uriFactory));
+			_linkKind = linkKind;
 		}
 
 		void IBuiltinElementGenerator.FetchOptions(TextEditorOptions options)
@@ -109,9 +138,19 @@ namespace AvaloniaEdit.Rendering
 			var linkText = new VisualLineLinkText(CurrentContext.VisualLine, m.Length)
 			{
 				NavigateUri = uri,
+				MatchedText = m.Value,
+				LinkKind = GetLinkKindFromMatch(m),
 				RequireControlModifierForClick = RequireControlModifierForClick
 			};
 			return linkText;
+		}
+
+		/// <summary>
+		/// Fetches an application-defined link kind from the regex match.
+		/// </summary>
+		protected virtual string GetLinkKindFromMatch(Match match)
+		{
+			return _linkKind;
 		}
 
 		/// <summary>
@@ -119,6 +158,9 @@ namespace AvaloniaEdit.Rendering
 		/// </summary>
 		protected virtual Uri GetUriFromMatch(Match match)
 		{
+			if (_uriFactory != null)
+				return _uriFactory(match);
+
 			var targetUrl = match.Value;
 			if (targetUrl.StartsWith("www.", StringComparison.Ordinal))
 				targetUrl = "http://" + targetUrl;
@@ -149,6 +191,11 @@ namespace AvaloniaEdit.Rendering
 		{
 			var targetUrl = "mailto:" + match.Value;
 			return Uri.IsWellFormedUriString(targetUrl, UriKind.Absolute) ? new Uri(targetUrl) : null;
+		}
+
+		protected override string GetLinkKindFromMatch(Match match)
+		{
+			return "email";
 		}
 	}
 }

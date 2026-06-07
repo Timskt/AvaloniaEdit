@@ -1,9 +1,12 @@
 ﻿using Avalonia;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless.NUnit;
+using Avalonia.Media;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Rendering;
-
+using System;
+using System.Linq;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 
 namespace AvaloniaEdit.Tests.Rendering
@@ -52,6 +55,75 @@ namespace AvaloniaEdit.Tests.Rendering
 
             Assert.AreEqual(1, visualLine.TextLines.Count);
             Assert.AreEqual("hello world", new string(visualLine.TextLines[0].TextRuns[0].Text.Span));
+        }
+
+        [AvaloniaTest]
+        public void Custom_Link_Generator_Can_Create_Ip_Link()
+        {
+            var textView = new TextView();
+            var document = new TextDocument("server 127.0.0.1 ready");
+            textView.Document = document;
+            textView.ElementGenerators.Add(new LinkElementGenerator(
+                new Regex(@"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+                match => new Uri("im://ip/" + match.Value),
+                "ip"));
+
+            var visualLine = textView.GetOrConstructVisualLine(document.Lines[0]);
+            var link = visualLine.Elements.OfType<VisualLineLinkText>().Single();
+
+            Assert.AreEqual("127.0.0.1", link.MatchedText);
+            Assert.AreEqual("ip", link.LinkKind);
+            Assert.AreEqual("im://ip/127.0.0.1", link.NavigateUri.ToString());
+        }
+
+        [AvaloniaTest]
+        public void Built_In_Ip_Link_Generator_Creates_Ip_Link()
+        {
+            var textView = new TextView();
+            var document = new TextDocument("server 127.0.0.1 invalid 999.0.0.1");
+            textView.Document = document;
+            textView.ElementGenerators.Add(LinkElementGenerator.CreateIpAddressGenerator());
+
+            var visualLine = textView.GetOrConstructVisualLine(document.Lines[0]);
+            var link = visualLine.Elements.OfType<VisualLineLinkText>().Single();
+
+            Assert.AreEqual("127.0.0.1", link.MatchedText);
+            Assert.AreEqual("ip", link.LinkKind);
+            Assert.AreEqual("im://ip/127.0.0.1", link.NavigateUri.ToString());
+        }
+
+        [AvaloniaTest]
+        public void Link_Style_Selector_Can_Style_By_Link_Kind()
+        {
+            var textView = new TextView
+            {
+                LinkTextStyleSelector = context => context.LinkKind == "ip"
+                    ? new LinkTextStyle
+                    {
+                        ForegroundBrush = Brushes.DarkOrange,
+                        BackgroundBrush = Brushes.Transparent,
+                        Underline = false
+                    }
+                    : null
+            };
+            var document = new TextDocument("server 127.0.0.1 ready");
+            textView.Document = document;
+            textView.ElementGenerators.Add(new LinkElementGenerator(
+                new Regex(@"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+                match => new Uri("im://ip/" + match.Value),
+                "ip"));
+
+            var visualLine = textView.GetOrConstructVisualLine(document.Lines[0]);
+            var link = visualLine.Elements.OfType<VisualLineLinkText>().Single();
+            var style = textView.GetLinkTextStyle(new LinkTextStyleContext(
+                textView,
+                link.NavigateUri,
+                link.MatchedText,
+                link.LinkKind,
+                link));
+
+            Assert.AreSame(Brushes.DarkOrange, style.ForegroundBrush);
+            Assert.IsFalse(style.Underline.Value);
         }
     }
 }

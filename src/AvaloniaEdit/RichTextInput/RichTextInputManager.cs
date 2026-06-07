@@ -280,6 +280,50 @@ namespace AvaloniaEdit.RichTextInput
         }
     }
 
+    public sealed class RichTextTextTriggerOptions
+    {
+        public RichTextTextTriggerOptions()
+        {
+            Trigger = '@';
+            MaxQueryLength = 64;
+            StopAtRichContent = true;
+            AllowEmptyQuery = true;
+        }
+
+        public char Trigger { get; set; }
+
+        public int MaxQueryLength { get; set; }
+
+        public bool StopAtRichContent { get; set; }
+
+        public bool AllowEmptyQuery { get; set; }
+
+        public Func<char, bool> IsBoundary { get; set; }
+
+        public Func<char, bool> IsQueryCharacter { get; set; }
+    }
+
+    public sealed class RichTextTextTriggerMatch
+    {
+        public RichTextTextTriggerMatch(char trigger, int triggerOffset, int caretOffset, string query)
+        {
+            Trigger = trigger;
+            TriggerOffset = triggerOffset;
+            CaretOffset = caretOffset;
+            Query = query ?? string.Empty;
+        }
+
+        public char Trigger { get; }
+
+        public int TriggerOffset { get; }
+
+        public int CaretOffset { get; }
+
+        public int Length => CaretOffset - TriggerOffset;
+
+        public string Query { get; }
+    }
+
     public sealed class RichTextContentChangedEventArgs : EventArgs
     {
         public RichTextContentChangedEventArgs(RichTextContentItem item)
@@ -612,25 +656,54 @@ namespace AvaloniaEdit.RichTextInput
 
         public bool TryGetTextTriggerRange(char trigger, out int triggerOffset, out string query)
         {
+            if (TryGetTextTrigger(new RichTextTextTriggerOptions { Trigger = trigger }, out var match))
+            {
+                triggerOffset = match.TriggerOffset;
+                query = match.Query;
+                return true;
+            }
+
             triggerOffset = -1;
             query = null;
+            return false;
+        }
+
+        public bool TryGetTextTrigger(RichTextTextTriggerOptions options, out RichTextTextTriggerMatch match)
+        {
+            if (options == null)
+                throw new ArgumentNullException(nameof(options));
+
+            match = null;
 
             var document = _textArea.Document;
             if (document == null)
                 return false;
 
             var caretOffset = Math.Max(0, Math.Min(_textArea.Caret.Offset, document.TextLength));
-            for (var offset = caretOffset - 1; offset >= 0; offset--)
+            var minOffset = options.MaxQueryLength > 0
+                ? Math.Max(0, caretOffset - options.MaxQueryLength - 1)
+                : 0;
+
+            for (var offset = caretOffset - 1; offset >= minOffset; offset--)
             {
                 var c = document.GetCharAt(offset);
-                if (c == trigger)
+                if (c == options.Trigger)
                 {
-                    triggerOffset = offset;
-                    query = document.GetText(offset + 1, caretOffset - offset - 1);
+                    var query = document.GetText(offset + 1, caretOffset - offset - 1);
+                    if (!options.AllowEmptyQuery && query.Length == 0)
+                        return false;
+
+                    match = new RichTextTextTriggerMatch(options.Trigger, offset, caretOffset, query);
                     return true;
                 }
 
-                if (char.IsWhiteSpace(c) || c == ObjectReplacementCharacter)
+                if (options.StopAtRichContent && c == ObjectReplacementCharacter)
+                    break;
+
+                if (options.IsBoundary?.Invoke(c) == true || (options.IsBoundary == null && char.IsWhiteSpace(c)))
+                    break;
+
+                if (options.IsQueryCharacter != null && !options.IsQueryCharacter(c))
                     break;
             }
 
