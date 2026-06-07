@@ -71,7 +71,7 @@ namespace AvaloniaEdit.Demo
 
             Editor.TextArea.TextView.ElementGenerators.Add(_generator);
             Editor.TextArea.TextView.AnimateInlineObjectPlacement = true;
-            Editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(120);
+            Editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(220);
             Editor.TextArea.TextView.ElementGenerators.Add(LinkElementGenerator.CreateIpAddressGenerator());
             Editor.TextArea.TextView.LinkTextStyleSelector = CreateLinkTextStyle;
             Editor.TextArea.TextView.LinkTextClicked += TextView_LinkTextClicked;

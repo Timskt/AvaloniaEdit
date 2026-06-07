@@ -577,7 +577,7 @@ namespace AvaloniaEdit.RichTextInput
                 _textArea.ClearSelection();
             }
 
-            _textArea.Caret.BringCaretToView();
+            FinalizeCaretAfterInsertion();
             return item;
         }
 
@@ -666,7 +666,7 @@ namespace AvaloniaEdit.RichTextInput
 
                 _textArea.Caret.Offset = offset + ObjectReplacementString.Length;
                 _textArea.ClearSelection();
-                _textArea.Caret.BringCaretToView();
+                FinalizeCaretAfterInsertion();
                 return item;
             }
         }
@@ -1179,6 +1179,7 @@ namespace AvaloniaEdit.RichTextInput
             }
 
             _textArea.TextView.Redraw();
+            FinalizeCaretAfterInsertion();
             return true;
         }
 
@@ -1282,7 +1283,7 @@ namespace AvaloniaEdit.RichTextInput
                 _textArea.ClearSelection();
             }
 
-            _textArea.Caret.BringCaretToView();
+            FinalizeCaretAfterInsertion();
             return true;
         }
 
@@ -1314,7 +1315,7 @@ namespace AvaloniaEdit.RichTextInput
 
             _textArea.Caret.Offset = offset;
             _textArea.ClearSelection();
-            _textArea.Caret.BringCaretToView();
+            FinalizeCaretAfterInsertion();
             return true;
         }
 
@@ -1337,8 +1338,15 @@ namespace AvaloniaEdit.RichTextInput
                 _textArea.ClearSelection();
             }
 
-            _textArea.Caret.BringCaretToView();
+            FinalizeCaretAfterInsertion();
             return true;
+        }
+
+        private void FinalizeCaretAfterInsertion()
+        {
+            _textArea.Caret.ResetVisualColumn();
+            _textArea.Focus();
+            _textArea.Caret.BringCaretToView();
         }
 
         private async Task<RichTextContent> CreateContentForFileAsync(IStorageItem file)
