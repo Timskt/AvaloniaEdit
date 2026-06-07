@@ -169,12 +169,17 @@ richInput.ContentRemoving += (_, e) =>
 
 ## @ 人和指令弹窗
 
-触发逻辑建议放在业务层：监听文本输入，检测当前 caret 前面的 `@query`，用 `GetCaretAnchorRect()` 把 Popup 放到光标附近；用户选中成员后，用 `ReplaceRangeWithContent` 替换掉 `@query`。
+触发逻辑建议放在业务层：监听文本输入、粘贴或业务命令后，检测当前 caret 前面的 `@query`，用 `GetCaretAnchorRect()` 把 Popup 放到光标附近；用户选中成员后，用 `ReplaceRangeWithContent` 替换掉 `@query`。
 
 ```csharp
 var mentionStart = -1;
 
 editor.TextArea.TextEntered += (_, e) =>
+    UpdateMentionPopup();
+
+// 在 PasteHandler、DropHandler 或业务主动插入文本后，也调用 UpdateMentionPopup()。
+
+void UpdateMentionPopup()
 {
     if (!richInput.TryGetTextTriggerRange('@', out mentionStart, out var query))
     {
@@ -189,7 +194,7 @@ editor.TextArea.TextEntered += (_, e) =>
     mentionPopup.HorizontalOffset = anchor.X;
     mentionPopup.VerticalOffset = anchor.Bottom;
     mentionPopup.IsOpen = true;
-};
+}
 
 void CommitMention(Member member)
 {
@@ -206,6 +211,24 @@ void CommitMention(Member member)
     mentionStart = -1;
 }
 ```
+
+按键事件可以用来更早地知道用户按下了 `@`，但它覆盖不了粘贴、IME 提交和程序写入文本。实际业务里建议把“检测当前触发范围并刷新 Popup”封装成一个方法，在 `TextEntered`、`PasteHandler`、候选列表键盘操作后统一调用。
+
+## URL 和邮箱链接
+
+普通文本里的 URL/邮箱可以直接使用 AvaloniaEdit 内置链接识别：
+
+```csharp
+editor.Options.EnableHyperlinks = true;
+editor.Options.EnableEmailHyperlinks = true;
+editor.Options.RequireControlModifierForHyperlinkClick = false;
+
+editor.TextArea.TextView.LinkTextForegroundBrush = Brushes.DodgerBlue;
+editor.TextArea.TextView.LinkTextBackgroundBrush = Brushes.Transparent;
+editor.TextArea.TextView.LinkTextUnderline = true;
+```
+
+更复杂的协议可以继承 `LinkElementGenerator`，用自己的 regex 和跳转逻辑。
 
 ## 粘贴和拖放导入
 
