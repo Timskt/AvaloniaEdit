@@ -24,6 +24,13 @@ using AvaloniaEdit.CodeCompletion;
 
 namespace AvaloniaEdit
 {
+    public enum LineContentVerticalAlignment
+    {
+        Top,
+        Center,
+        Bottom
+    }
+
     /// <summary>
     /// A container for the text editor options.
     /// </summary>
@@ -741,6 +748,25 @@ namespace AvaloniaEdit
                 {
                     _lineHeightFactor = value;
                     OnPropertyChanged(nameof(LineHeightFactor));
+                }
+            }
+        }
+
+        private LineContentVerticalAlignment _lineContentVerticalAlignment = LineContentVerticalAlignment.Bottom;
+
+        /// <summary>
+        /// Gets/Sets how text content is positioned vertically when inline elements make a text line taller than the default text height.
+        /// </summary>
+        [DefaultValue(LineContentVerticalAlignment.Bottom)]
+        public LineContentVerticalAlignment LineContentVerticalAlignment
+        {
+            get { return _lineContentVerticalAlignment; }
+            set
+            {
+                if (_lineContentVerticalAlignment != value)
+                {
+                    _lineContentVerticalAlignment = value;
+                    OnPropertyChanged(nameof(LineContentVerticalAlignment));
                 }
             }
         }

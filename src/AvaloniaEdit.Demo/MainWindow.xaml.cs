@@ -41,6 +41,8 @@ namespace AvaloniaEdit.Demo
         private Button _insertFileCardButton;
         private Button _insertSnippetButton;
         private ComboBox _syntaxModeCombo;
+        private ComboBox _lineContentAlignmentCombo;
+        private ComboBox _richContentAlignmentCombo;
         private TextBlock _statusTextBlock;
         private ElementGenerator _generator = new ElementGenerator();
         private RegistryOptions _registryOptions;
@@ -92,6 +94,16 @@ namespace AvaloniaEdit.Demo
             _richTextInputManager.MaxImageWidth = 190;
             _richTextInputManager.MaxImageHeight = 130;
             _richTextInputManager.ElementFactory = CreateRichTextInputElement;
+
+            _lineContentAlignmentCombo = this.FindControl<ComboBox>("lineContentAlignmentCombo");
+            _lineContentAlignmentCombo.ItemsSource = Enum.GetValues(typeof(LineContentVerticalAlignment));
+            _lineContentAlignmentCombo.SelectedItem = _richTextInputManager.LineContentAlignment;
+            _lineContentAlignmentCombo.SelectionChanged += LineContentAlignmentCombo_SelectionChanged;
+
+            _richContentAlignmentCombo = this.FindControl<ComboBox>("richContentAlignmentCombo");
+            _richContentAlignmentCombo.ItemsSource = Enum.GetValues(typeof(InlineObjectVerticalAlignment));
+            _richContentAlignmentCombo.SelectedItem = _richTextInputManager.InlineObjectAlignment;
+            _richContentAlignmentCombo.SelectionChanged += RichContentAlignmentCombo_SelectionChanged;
 
             _registryOptions = new RegistryOptions(
                 (ThemeName)_currentTheme);
@@ -396,6 +408,25 @@ namespace AvaloniaEdit.Demo
         {
             _richTextInputManager.InsertCustom("demo-report.pdf", new { Type = "DemoFile" });
             _textEditor.Focus();
+        }
+
+        private void LineContentAlignmentCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_lineContentAlignmentCombo.SelectedItem is LineContentVerticalAlignment alignment)
+            {
+                _richTextInputManager.LineContentAlignment = alignment;
+                _statusTextBlock.Text = $"Line content alignment: {alignment}";
+            }
+        }
+
+        private void RichContentAlignmentCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_richContentAlignmentCombo.SelectedItem is InlineObjectVerticalAlignment alignment)
+            {
+                _richTextInputManager.InlineObjectAlignment = alignment;
+                _textEditor.TextArea.TextView.Redraw();
+                _statusTextBlock.Text = $"Inline alignment: {alignment}";
+            }
         }
 
         private void textEditor_TextArea_TextEntering(object sender, TextInputEventArgs e)

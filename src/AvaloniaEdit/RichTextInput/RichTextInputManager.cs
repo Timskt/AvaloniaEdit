@@ -223,7 +223,15 @@ namespace AvaloniaEdit.RichTextInput
 
         public Func<IDataObject, Task<IEnumerable<RichTextContent>>> DataObjectImporter { get; set; }
 
-        public InlineObjectVerticalAlignment InlineObjectAlignment { get; set; } = InlineObjectVerticalAlignment.Center;
+        public InlineObjectVerticalAlignment InlineObjectAlignment { get; set; } = InlineObjectVerticalAlignment.Bottom;
+
+        public Func<RichTextContentItem, InlineObjectVerticalAlignment> InlineObjectAlignmentSelector { get; set; }
+
+        public LineContentVerticalAlignment LineContentAlignment
+        {
+            get { return _textArea.Options.LineContentVerticalAlignment; }
+            set { _textArea.Options.LineContentVerticalAlignment = value; }
+        }
 
         public bool SelectContentOnPointerPressed { get; set; } = true;
 
@@ -361,6 +369,11 @@ namespace AvaloniaEdit.RichTextInput
             var factory = ElementFactory;
             var element = factory?.Invoke(item) ?? CreateDefaultElement(item, GetConstrainedInlineWidth(), MaxImageWidth, MaxImageHeight);
             return SelectContentOnPointerPressed ? new RichTextInlineContentControl(this, item, element) : element;
+        }
+
+        public InlineObjectVerticalAlignment GetInlineObjectAlignment(RichTextContentItem item)
+        {
+            return InlineObjectAlignmentSelector?.Invoke(item) ?? InlineObjectAlignment;
         }
 
         public bool CanInsert(IDataObject dataObject)
@@ -1038,7 +1051,7 @@ namespace AvaloniaEdit.RichTextInput
         public override VisualLineElement ConstructElement(int offset)
         {
             return _manager.TryGetItem(offset, out var item)
-                ? new InlineObjectElement(RichTextInputManager.ObjectReplacementString.Length, _manager.CreateElement(item), _manager.InlineObjectAlignment)
+                ? new InlineObjectElement(RichTextInputManager.ObjectReplacementString.Length, _manager.CreateElement(item), _manager.GetInlineObjectAlignment(item))
                 : null;
         }
     }
