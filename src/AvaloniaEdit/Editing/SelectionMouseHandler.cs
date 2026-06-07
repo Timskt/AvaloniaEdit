@@ -263,8 +263,18 @@ namespace AvaloniaEdit.Editing
                     {
                         Debug.WriteLine("Drop: insert at " + start);
 
+                        var richTextInputManager = GetRichTextInputHandler() as RichTextInputManager;
+                        if (richTextInputManager != null && richTextInputManager.CanDrop(e.Data))
+                        {
+                            if (await richTextInputManager.InsertDropDataAsync(e.Data, start, false))
+                            {
+                                e.Handled = true;
+                                return;
+                            }
+                        }
+
                         var richTextInputHandler = GetRichTextInputHandler();
-                        if (richTextInputHandler?.CanInsert(e.Data) == true)
+                        if (richTextInputHandler != richTextInputManager && richTextInputHandler?.CanInsert(e.Data) == true)
                         {
                             if (await richTextInputHandler.InsertDataAsync(e.Data, start, false))
                             {

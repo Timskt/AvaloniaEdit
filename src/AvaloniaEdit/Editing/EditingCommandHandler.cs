@@ -518,8 +518,19 @@ namespace AvaloniaEdit.Editing
                     if (topLevel?.Clipboard == null)
                         return;
                     var dataObject = await CreateClipboardDataObjectAsync(topLevel.Clipboard);
+                    var richTextInputManager = textArea.GetService(typeof(IRichTextInputDataHandler)) as RichTextInputManager;
+                    if (richTextInputManager != null && richTextInputManager.CanPaste(dataObject))
+                    {
+                        if (await richTextInputManager.InsertPasteDataAsync(dataObject, textArea.Caret.Offset, true))
+                        {
+                            textArea.Caret.BringCaretToView();
+                            args.Handled = true;
+                            return;
+                        }
+                    }
+
                     var richTextInputHandler = textArea.GetService(typeof(IRichTextInputDataHandler)) as IRichTextInputDataHandler;
-                    if (richTextInputHandler?.CanInsert(dataObject) == true)
+                    if (richTextInputHandler != richTextInputManager && richTextInputHandler?.CanInsert(dataObject) == true)
                     {
                         if (await richTextInputHandler.InsertDataAsync(dataObject, textArea.Caret.Offset, true))
                         {
