@@ -16,6 +16,7 @@ using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
 using AvaloniaEdit.Folding;
 using AvaloniaEdit.Rendering;
+using AvaloniaEdit.RichTextInput;
 using AvaloniaEdit.TextMate;
 using TextMateSharp.Grammars;
 using Avalonia.Diagnostics;
@@ -36,6 +37,8 @@ namespace AvaloniaEdit.Demo
         private OverloadInsightWindow _insightWindow;
         private Button _addControlButton;
         private Button _clearControlButton;
+        private Button _insertEmojiButton;
+        private Button _insertFileCardButton;
         private Button _insertSnippetButton;
         private ComboBox _syntaxModeCombo;
         private TextBlock _statusTextBlock;
@@ -43,6 +46,7 @@ namespace AvaloniaEdit.Demo
         private RegistryOptions _registryOptions;
         private int _currentTheme = (int)ThemeName.DarkPlus;
         private CustomMargin _customMargin;
+        private RichTextInputManager _richTextInputManager;
 
         public MainWindow()
         {
@@ -73,10 +77,21 @@ namespace AvaloniaEdit.Demo
             _clearControlButton = this.FindControl<Button>("clearControlBtn");
             _clearControlButton.Click += ClearControlButton_Click;
 
+            _insertEmojiButton = this.FindControl<Button>("insertEmojiBtn");
+            _insertEmojiButton.Click += InsertEmojiButton_Click;
+
+            _insertFileCardButton = this.FindControl<Button>("insertFileCardBtn");
+            _insertFileCardButton.Click += InsertFileCardButton_Click;
+
             _insertSnippetButton = this.FindControl<Button>("insertSnippetBtn");
             _insertSnippetButton.Click += InsertSnippetButton_Click;
 
             _textEditor.TextArea.TextView.ElementGenerators.Add(_generator);
+            _richTextInputManager = RichTextInputManager.Install(_textEditor.TextArea);
+            _richTextInputManager.MaxInlineElementWidth = 240;
+            _richTextInputManager.MaxImageWidth = 190;
+            _richTextInputManager.MaxImageHeight = 130;
+            _richTextInputManager.ElementFactory = CreateRichTextInputElement;
 
             _registryOptions = new RegistryOptions(
                 (ThemeName)_currentTheme);
@@ -211,6 +226,85 @@ namespace AvaloniaEdit.Demo
             return true;
         }
 
+        private Control CreateRichTextInputElement(RichTextContentItem item)
+        {
+            var maxInlineWidth = GetRichContentMaxWidth();
+            if (item.Content.Kind == RichTextContentKind.File || item.Content.Kind == RichTextContentKind.Custom)
+            {
+                return new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(235, 244, 255)),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(59, 130, 246)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(8, 4),
+                    Margin = new Thickness(2, 1),
+                    Child = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 7,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = "ATTACH",
+                                FontSize = 10,
+                                FontWeight = FontWeight.Bold,
+                                Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175)),
+                                VerticalAlignment = VerticalAlignment.Center
+                            },
+                            new TextBlock
+                            {
+                                Text = item.Content.DisplayText,
+                                FontSize = 12,
+                                Foreground = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
+                                TextTrimming = TextTrimming.CharacterEllipsis,
+                                MaxWidth = maxInlineWidth,
+                                VerticalAlignment = VerticalAlignment.Center
+                            }
+                        }
+                    }
+                };
+            }
+
+            if (item.Content.Kind == RichTextContentKind.Image && item.Content.Value is Bitmap bitmap)
+            {
+                return new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(148, 163, 184)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(3),
+                    Margin = new Thickness(2, 1),
+                    Child = new Image
+                    {
+                        Source = bitmap,
+                        Width = Math.Min(_richTextInputManager.MaxImageWidth, Math.Min(maxInlineWidth, Math.Max(48, bitmap.Size.Width))),
+                        Height = Math.Min(_richTextInputManager.MaxImageHeight, Math.Max(48, bitmap.Size.Height)),
+                        Stretch = Stretch.Uniform
+                    }
+                };
+            }
+
+            return new TextBlock
+            {
+                Text = item.Content.DisplayText,
+                FontSize = item.Content.Kind == RichTextContentKind.Emoji ? 18 : 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(1, 0)
+            };
+        }
+
+        private double GetRichContentMaxWidth()
+        {
+            var width = _textEditor.TextArea.TextView.Bounds.Width;
+            if (double.IsNaN(width) || double.IsInfinity(width) || width <= 0)
+                return _richTextInputManager.MaxInlineElementWidth;
+
+            return Math.Min(_richTextInputManager.MaxInlineElementWidth, Math.Max(_richTextInputManager.MinInlineElementWidth, width - 40));
+        }
+
         private void Caret_PositionChanged(object sender, EventArgs e)
         {
             _statusTextBlock.Text = string.Format("Line {0} Column {1}",
@@ -290,6 +384,18 @@ namespace AvaloniaEdit.Demo
             //TODO: delete elements using back key
             _generator.controls.Clear();
             _textEditor.TextArea.TextView.Redraw();
+        }
+
+        private void InsertEmojiButton_Click(object sender, RoutedEventArgs e)
+        {
+            _textEditor.TextArea.PerformTextInput("😀");
+            _textEditor.Focus();
+        }
+
+        private void InsertFileCardButton_Click(object sender, RoutedEventArgs e)
+        {
+            _richTextInputManager.InsertCustom("demo-report.pdf", new { Type = "DemoFile" });
+            _textEditor.Focus();
         }
 
         private void textEditor_TextArea_TextEntering(object sender, TextInputEventArgs e)

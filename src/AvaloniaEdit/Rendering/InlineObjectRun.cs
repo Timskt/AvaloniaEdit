@@ -26,6 +26,14 @@ using Avalonia.Media.TextFormatting;
 
 namespace AvaloniaEdit.Rendering
 {
+    public enum InlineObjectVerticalAlignment
+    {
+        Baseline,
+        Top,
+        Center,
+        Bottom
+    }
+
     /// <summary>
 	/// A inline UIElement in the document.
 	/// </summary>
@@ -36,15 +44,23 @@ namespace AvaloniaEdit.Rendering
 		/// </summary>
 		public Control Element { get; }
 
+		public InlineObjectVerticalAlignment VerticalAlignment { get; }
+
 		/// <summary>
 		/// Creates a new InlineObjectElement.
 		/// </summary>
 		/// <param name="documentLength">The length of the element in the document. Must be non-negative.</param>
 		/// <param name="element">The element to display.</param>
 		public InlineObjectElement(int documentLength, Control element)
+			: this(documentLength, element, InlineObjectVerticalAlignment.Baseline)
+		{
+		}
+
+		public InlineObjectElement(int documentLength, Control element, InlineObjectVerticalAlignment verticalAlignment)
 			: base(1, documentLength)
 		{
 			Element = element ?? throw new ArgumentNullException(nameof(element));
+			VerticalAlignment = verticalAlignment;
 		}
 
 		/// <inheritdoc/>
@@ -53,7 +69,7 @@ namespace AvaloniaEdit.Rendering
 			if (context == null)
 				throw new ArgumentNullException(nameof(context));
 
-			return new InlineObjectRun(1, TextRunProperties, Element);
+			return new InlineObjectRun(1, TextRunProperties, Element, VerticalAlignment);
 		}
 	}
 
@@ -71,6 +87,11 @@ namespace AvaloniaEdit.Rendering
 		/// <param name="properties">The <see cref="TextRunProperties"/> to use.</param>
 		/// <param name="element">The <see cref="Control"/> to display.</param>
 		public InlineObjectRun(int length, TextRunProperties? properties, Control element)
+			: this(length, properties, element, InlineObjectVerticalAlignment.Baseline)
+		{
+		}
+
+		public InlineObjectRun(int length, TextRunProperties? properties, Control element, InlineObjectVerticalAlignment verticalAlignment)
 		{
 			if (length <= 0)
 				throw new ArgumentOutOfRangeException(nameof(length), length, "Value must be positive");
@@ -78,6 +99,7 @@ namespace AvaloniaEdit.Rendering
 			Length = length;
 			Properties = properties ?? throw new ArgumentNullException(nameof(properties));
 			Element = element ?? throw new ArgumentNullException(nameof(element));
+			VerticalAlignment = verticalAlignment;
 
 			DesiredSize = element.DesiredSize;
 		}
@@ -86,6 +108,8 @@ namespace AvaloniaEdit.Rendering
 		/// Gets the element displayed by the InlineObjectRun.
 		/// </summary>
 		public Control Element { get; }
+
+		public InlineObjectVerticalAlignment VerticalAlignment { get; }
 
 		/// <summary>
 		/// Gets the VisualLine that contains this object. This property is only available after the object
@@ -101,11 +125,27 @@ namespace AvaloniaEdit.Rendering
 		{
 			get
 			{
-				double baseline = TextBlock.GetBaselineOffset(Element);
-				if (double.IsNaN(baseline))
-					baseline = DesiredSize.Height;
-				return baseline;
+				var properties = Properties;
+				if (ReferenceEquals(properties, null))
+					return GetElementBaseline();
+
+				var textBaseline = properties.FontRenderingEmSize * 0.8;
+				return VerticalAlignment switch
+				{
+					InlineObjectVerticalAlignment.Top => textBaseline,
+					InlineObjectVerticalAlignment.Center => Math.Max(0, textBaseline - properties.FontRenderingEmSize / 2 + DesiredSize.Height / 2),
+					InlineObjectVerticalAlignment.Bottom => Math.Max(0, textBaseline - properties.FontRenderingEmSize + DesiredSize.Height),
+					_ => GetElementBaseline()
+				};
 			}
+		}
+
+		private double GetElementBaseline()
+		{
+			double baseline = TextBlock.GetBaselineOffset(Element);
+			if (double.IsNaN(baseline))
+				baseline = DesiredSize.Height;
+			return baseline;
 		}
 
 		/// <inheritdoc/>

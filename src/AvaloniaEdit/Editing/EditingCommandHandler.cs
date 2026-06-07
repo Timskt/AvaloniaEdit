@@ -20,9 +20,11 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using AvaloniaEdit.Document;
 using Avalonia.Input;
+using AvaloniaEdit.RichTextInput;
 using AvaloniaEdit.Utils;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -415,7 +417,8 @@ namespace AvaloniaEdit.Editing
             var text = textArea.Selection.GetText();
             text = TextUtilities.NormalizeNewLines(text, Environment.NewLine);
 
-            SetClipboardText(text, textArea);
+            var dataObject = CreateClipboardDataObject(textArea, text, textArea.Selection.SurroundingSegment);
+            SetClipboardDataObject(dataObject, textArea);
 
             textArea.OnTextCopied(new TextEventArgs(text));
             return true;
@@ -429,11 +432,20 @@ namespace AvaloniaEdit.Editing
             ////return !e.CommandCancelled;
         }
 
-        private static void SetClipboardText(string text, Visual visual)
+        private static DataObject CreateClipboardDataObject(TextArea textArea, string text, ISegment segment)
+        {
+            var dataObject = new DataObject();
+            dataObject.Set(DataFormats.Text, text);
+            if (textArea.GetService(typeof(IRichTextInputDataHandler)) is RichTextInputManager manager)
+                manager.TrySetRichClipboardData(dataObject, segment);
+            return dataObject;
+        }
+
+        private static void SetClipboardDataObject(DataObject dataObject, Visual visual)
         {
             try
             {
-                TopLevel.GetTopLevel(visual)?.Clipboard?.SetTextAsync(text);
+                TopLevel.GetTopLevel(visual)?.Clipboard?.SetDataObjectAsync(dataObject);
             }
             catch (Exception)
             {
@@ -478,7 +490,7 @@ namespace AvaloniaEdit.Editing
             //if (copyingEventArgs.CommandCancelled)
             //    return false;
 
-            SetClipboardText(text, textArea);
+            SetClipboardDataObject(CreateClipboardDataObject(textArea, text, wholeLine), textArea);
 
             textArea.OnTextCopied(new TextEventArgs(text));
             return true;
@@ -505,6 +517,18 @@ namespace AvaloniaEdit.Editing
                     var topLevel = TopLevel.GetTopLevel(textArea);
                     if (topLevel?.Clipboard == null)
                         return;
+                    var dataObject = await CreateClipboardDataObjectAsync(topLevel.Clipboard);
+                    var richTextInputHandler = textArea.GetService(typeof(IRichTextInputDataHandler)) as IRichTextInputDataHandler;
+                    if (richTextInputHandler?.CanInsert(dataObject) == true)
+                    {
+                        if (await richTextInputHandler.InsertDataAsync(dataObject, textArea.Caret.Offset, true))
+                        {
+                            textArea.Caret.BringCaretToView();
+                            args.Handled = true;
+                            return;
+                        }
+                    }
+
                     var text = await topLevel.Clipboard.GetTextAsync();
 
                     if (text == null)
@@ -527,6 +551,33 @@ namespace AvaloniaEdit.Editing
                     textArea.Document.EndUpdate();
                 }
             }
+        }
+
+        private static async Task<DataObject> CreateClipboardDataObjectAsync(Avalonia.Input.Platform.IClipboard clipboard)
+        {
+            var dataObject = new DataObject();
+            var formats = await clipboard.GetFormatsAsync();
+            if (formats != null)
+            {
+                foreach (var format in formats)
+                {
+                    try
+                    {
+                        var data = await clipboard.GetDataAsync(format);
+                        if (data != null)
+                            dataObject.Set(format, data);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            var text = await clipboard.GetTextAsync();
+            if (text != null && !dataObject.Contains(DataFormats.Text))
+                dataObject.Set(DataFormats.Text, text);
+
+            return dataObject;
         }
 
         internal static string GetTextToPaste(IDataObject dataObject, TextArea textArea)
