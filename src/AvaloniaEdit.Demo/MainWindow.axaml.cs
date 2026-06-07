@@ -74,6 +74,9 @@ namespace AvaloniaEdit.Demo
             _richTextInputManager.ContentDoubleTapped += RichTextInputManager_ContentDoubleTapped;
             _richTextInputManager.ContentContextRequested += RichTextInputManager_ContentContextRequested;
 
+            LineContentAlignmentCombo.ItemsSource = Enum.GetValues<LineContentVerticalAlignment>();
+            LineContentAlignmentCombo.SelectedItem = _richTextInputManager.LineContentAlignment;
+            LineContentAlignmentCombo.SelectionChanged += LineContentAlignmentCombo_SelectionChanged;
             RichContentAlignmentCombo.ItemsSource = Enum.GetValues<InlineObjectVerticalAlignment>();
             RichContentAlignmentCombo.SelectedItem = _richTextInputManager.InlineObjectAlignment;
             RichContentAlignmentCombo.SelectionChanged += RichContentAlignmentCombo_SelectionChanged;
@@ -379,7 +382,16 @@ namespace AvaloniaEdit.Demo
             {
                 _richTextInputManager.InlineObjectAlignment = alignment;
                 Editor.TextArea.TextView.Redraw();
-                StatusText.Text = $"Rich alignment: {alignment}";
+                StatusText.Text = $"Inline alignment: {alignment}";
+            }
+        }
+
+        private void LineContentAlignmentCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (LineContentAlignmentCombo.SelectedItem is LineContentVerticalAlignment alignment)
+            {
+                _richTextInputManager.LineContentAlignment = alignment;
+                StatusText.Text = $"Line content alignment: {alignment}";
             }
         }
 

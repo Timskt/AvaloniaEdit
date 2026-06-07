@@ -399,7 +399,7 @@ namespace AvaloniaEdit.Rendering
 
                 if (tl == textLine)
                 {
-                    double textOffset = (lineHeight - textHeight) / 2;
+                    double textOffset = GetTextLineContentOffset(TextView.Options.LineContentVerticalAlignment, lineHeight, textHeight);
 
                     switch (yPositionMode)
                     {
@@ -425,6 +425,18 @@ namespace AvaloniaEdit.Rendering
                 pos += lineHeight;
             }
             throw new ArgumentException("textLine is not a line in this VisualLine");
+        }
+
+        internal static double GetTextLineContentOffset(LineContentVerticalAlignment alignment, double lineHeight, double textHeight)
+        {
+            var extraHeight = Math.Max(0, lineHeight - textHeight);
+            return alignment switch
+            {
+                LineContentVerticalAlignment.Top => 0,
+                LineContentVerticalAlignment.Center => extraHeight / 2,
+                LineContentVerticalAlignment.Bottom => extraHeight,
+                _ => extraHeight
+            };
         }
 
         /// <summary>
@@ -831,7 +843,7 @@ namespace AvaloniaEdit.Rendering
                 var textLine = textLines[i];
                 double textHeight = textLine.Height;
                 double lineHeight = Math.Max(textHeight, defaultLineHeight);
-                double textOffset = (lineHeight - textHeight) / 2;
+                double textOffset = VisualLine.GetTextLineContentOffset(VisualLine.TextView.Options.LineContentVerticalAlignment, lineHeight, textHeight);
                 textLine.Draw(context, new Point(0, pos + textOffset));
                 pos += lineHeight;
             }

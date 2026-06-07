@@ -27,6 +27,7 @@
             <Button Name="ClearControlBtn" Content="Clear Buttons" VerticalAlignment="Stretch" VerticalContentAlignment="Center"/>
             <Button Name="InsertEmojiBtn" Content="Insert Emoji" VerticalAlignment="Stretch" VerticalContentAlignment="Center"/>
             <Button Name="InsertFileCardBtn" Content="Insert File Card" VerticalAlignment="Stretch" VerticalContentAlignment="Center"/>
+            <ComboBox Name="LineContentAlignmentCombo" Width="110" VerticalAlignment="Stretch" VerticalContentAlignment="Center"/>
             <ComboBox Name="RichContentAlignmentCombo" Width="110" VerticalAlignment="Stretch" VerticalContentAlignment="Center"/>
             <Button Name="ShowRichPlainTextBtn" Content="Plain Text" VerticalAlignment="Stretch" VerticalContentAlignment="Center"/>
             <ComboBox Name="SyntaxModeCombo" VerticalAlignment="Stretch" VerticalContentAlignment="Center"/>

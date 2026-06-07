@@ -8,6 +8,7 @@ using Avalonia.Input;
 using Avalonia.Media.Imaging;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
+using AvaloniaEdit.Rendering;
 using AvaloniaEdit.RichTextInput;
 using NUnit.Framework;
 using Assert = NUnit.Framework.Legacy.ClassicAssert;
@@ -265,6 +266,22 @@ namespace AvaloniaEdit.Tests.RichTextInput
             var caretRectangle = textArea.Caret.CalculateCaretRectangle();
 
             Assert.Less(caretRectangle.Height, 40);
+        }
+
+        [AvaloniaTest]
+        public void RichTextInputDefaultsToBottomAlignmentAndAllowsPerItemOverride()
+        {
+            var textArea = CreateTextArea("");
+            var manager = RichTextInputManager.Install(textArea);
+            var imageLike = manager.InsertCustom("image-like", 1);
+            manager.LineContentAlignment = LineContentVerticalAlignment.Top;
+            manager.InlineObjectAlignmentSelector = item => item == imageLike
+                ? InlineObjectVerticalAlignment.Top
+                : InlineObjectVerticalAlignment.Bottom;
+
+            Assert.AreEqual(InlineObjectVerticalAlignment.Bottom, manager.InlineObjectAlignment);
+            Assert.AreEqual(LineContentVerticalAlignment.Top, textArea.Options.LineContentVerticalAlignment);
+            Assert.AreEqual(InlineObjectVerticalAlignment.Top, manager.GetInlineObjectAlignment(imageLike));
         }
 
         private static TextArea CreateTextArea(string text)

@@ -216,7 +216,9 @@ namespace AvaloniaEdit.Rendering
             else
                 _columnRulerRenderer.SetRuler(null, ColumnRulerPen);
 
-            if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(TextEditorOptions.LineHeightFactor))
+            if (string.IsNullOrEmpty(e.PropertyName)
+                || e.PropertyName == nameof(TextEditorOptions.LineHeightFactor)
+                || e.PropertyName == nameof(TextEditorOptions.LineContentVerticalAlignment))
                 InvalidateDefaultTextMetrics();
 
             UpdateBuiltinElementGeneratorsFromOptions();
