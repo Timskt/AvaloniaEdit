@@ -24,6 +24,7 @@ using Avalonia;
 using Avalonia.Input;
 using Avalonia.Threading;
 using AvaloniaEdit.Document;
+using AvaloniaEdit.RichTextInput;
 using AvaloniaEdit.Utils;
 
 namespace AvaloniaEdit.Editing
@@ -178,6 +179,25 @@ namespace AvaloniaEdit.Editing
 
         DragDropEffects GetEffect(DragEventArgs e)
         {
+            var richTextInputHandler = GetRichTextInputHandler();
+            if (richTextInputHandler?.CanInsert(e.DataTransfer) == true)
+            {
+                e.Handled = true;
+                int visualColumn;
+                bool isAtEndOfLine;
+                int offset = GetOffsetFromMousePosition(e.GetPosition(TextArea.TextView), out visualColumn, out isAtEndOfLine);
+                if (offset >= 0)
+                {
+                    TextArea.Caret.Position = new TextViewPosition(TextArea.Document.GetLocation(offset), visualColumn) { IsAtEndOfLine = isAtEndOfLine };
+                    TextArea.Caret.DesiredXPos = double.NaN;
+                    if (TextArea.ReadOnlySectionProvider.CanInsert(offset))
+                    {
+                        var copy = e.DragEffects & DragDropEffects.Copy;
+                        return copy == DragDropEffects.None ? DragDropEffects.Copy : copy;
+                    }
+                }
+            }
+
             if (e.DataTransfer.Contains(DataFormat.Text))
             {
                 e.Handled = true;
@@ -205,6 +225,11 @@ namespace AvaloniaEdit.Editing
             return DragDropEffects.None;
         }
 
+        private IRichTextInputDataHandler GetRichTextInputHandler()
+        {
+            return TextArea.GetService(typeof(IRichTextInputDataHandler)) as IRichTextInputDataHandler;
+        }
+
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes")]
         void textArea_DragLeave(object sender, DragEventArgs e)
         {
@@ -221,7 +246,7 @@ namespace AvaloniaEdit.Editing
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes")]
-        void textArea_Drop(object sender, DragEventArgs e)
+        async void textArea_Drop(object sender, DragEventArgs e)
         {
             try
             {
@@ -238,6 +263,16 @@ namespace AvaloniaEdit.Editing
                     else
                     {
                         Debug.WriteLine("Drop: insert at " + start);
+
+                        var richTextInputHandler = GetRichTextInputHandler();
+                        if (richTextInputHandler?.CanInsert(e.DataTransfer) == true)
+                        {
+                            if (await richTextInputHandler.InsertDataAsync(e.DataTransfer, start, false))
+                            {
+                                e.Handled = true;
+                                return;
+                            }
+                        }
 
                         ////var pastingEventArgs = new DataObjectPastingEventArgs(e.Data, true, DataFormats.UnicodeText);
                         ////TextArea.RaiseEvent(pastingEventArgs);

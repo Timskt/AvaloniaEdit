@@ -1288,19 +1288,29 @@ namespace AvaloniaEdit.Editing
             {
                 get
                 {
-                    if (_textArea == null)
+                    if (_textArea?.Document == null)
                         return new TextSelection(0, 0);
-                    return new TextSelection(_textArea.Caret.Position.Column, _textArea.Caret.Position.Column + _textArea.Selection.Length);
+
+                    var line = _textArea.Document.GetLineByNumber(_textArea.Caret.Line);
+                    var start = _textArea.Caret.Offset;
+                    var end = start;
+                    if (!_textArea.Selection.IsEmpty && _textArea.Selection.SurroundingSegment != null)
+                    {
+                        var segment = _textArea.Selection.SurroundingSegment;
+                        start = Math.Max(line.Offset, Math.Min(segment.Offset, line.EndOffset));
+                        end = Math.Max(line.Offset, Math.Min(segment.EndOffset, line.EndOffset));
+                    }
+
+                    return new TextSelection(start - line.Offset, end - line.Offset);
                 }
                 set
                 {
-                    if (_textArea == null) return;
-                    var selection = _textArea.Selection;
-                    if (selection.StartPosition.Line == 0) return;
+                    if (_textArea?.Document == null) return;
+                    var line = _textArea.Document.GetLineByNumber(_textArea.Caret.Line);
+                    var start = line.Offset + Math.Max(0, Math.Min(value.Start, line.Length));
+                    var end = line.Offset + Math.Max(0, Math.Min(value.End, line.Length));
 
-                    _textArea.Selection = selection.StartSelectionOrSetEndpoint(
-                        new TextViewPosition(selection.StartPosition.Line, value.Start),
-                        new TextViewPosition(selection.StartPosition.Line, value.End));
+                    _textArea.Selection = AvaloniaEdit.Editing.Selection.Create(_textArea, start, end);
                 }
             }
 

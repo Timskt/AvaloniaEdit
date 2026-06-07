@@ -25,6 +25,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using AvaloniaEdit.Document;
+using AvaloniaEdit.RichTextInput;
 using AvaloniaEdit.Utils;
 
 namespace AvaloniaEdit.Editing
@@ -422,6 +423,7 @@ namespace AvaloniaEdit.Editing
             var item = new DataTransferItem();
             item.Set(DataFormat.Text, text);
             df.Add(item);
+            TrySetRichClipboardData(textArea, df, textArea.Selection.SurroundingSegment);
             SetClipboardText(df, textArea);
 
             textArea.OnTextCopied(new TextEventArgs(text));
@@ -488,10 +490,17 @@ namespace AvaloniaEdit.Editing
             var item = new DataTransferItem();
             item.Set(DataFormat.Text, text);
             df.Add(item);
+            TrySetRichClipboardData(textArea, df, wholeLine);
             SetClipboardText(df, textArea);
 
             textArea.OnTextCopied(new TextEventArgs(text));
             return true;
+        }
+
+        private static void TrySetRichClipboardData(TextArea textArea, DataTransfer dataTransfer, ISegment segment)
+        {
+            if (textArea.GetService(typeof(IRichTextInputDataHandler)) is RichTextInputManager manager)
+                manager.TrySetRichClipboardData(dataTransfer, segment);
         }
 
         private static void CanPaste(object target, CanExecuteRoutedEventArgs args)
@@ -509,26 +518,46 @@ namespace AvaloniaEdit.Editing
             var textArea = GetTextArea(target);
             if (textArea?.Document != null)
             {
+                IAsyncDataTransfer data = null;
                 textArea.Document.BeginUpdate();
                 try
                 {
-                    string text = null;
+                    var topLevel = TopLevel.GetTopLevel(textArea);
+                    if (topLevel?.Clipboard == null)
+                        return;
+
                     try
                     {
-                        var topLevel = TopLevel.GetTopLevel(textArea);
-                        if (topLevel?.Clipboard == null)
-                            return;
-                        var data = await topLevel.Clipboard.TryGetDataAsync();
-                        text = data != null ? await data.TryGetTextAsync() : null;
+                        data = await topLevel.Clipboard.TryGetDataAsync();
                     }
                     catch (Exception)
                     {
                         return;
                     }
 
+                    var richTextInputHandler = textArea.GetService(typeof(IRichTextInputDataHandler)) as IRichTextInputDataHandler;
+                    if (richTextInputHandler?.CanInsert(data) == true)
+                    {
+                        if (await richTextInputHandler.InsertDataAsync(data, textArea.Caret.Offset, true))
+                        {
+                            textArea.Caret.BringCaretToView();
+                            args.Handled = true;
+                            return;
+                        }
+                    }
+
+                    string text = null;
+                    try
+                    {
+                        text = data != null ? await data.TryGetTextAsync() : null;
+                    }
+                    catch (Exception)
+                    {
+                        text = null;
+                    }
+
                     if (text == null)
                         return;
-
                     text = GetTextToPaste(text, textArea);
 
                     if (!string.IsNullOrEmpty(text))
@@ -543,6 +572,7 @@ namespace AvaloniaEdit.Editing
                 }
                 finally
                 {
+                    (data as IDisposable)?.Dispose();
                     textArea.Document.EndUpdate();
                 }
             }

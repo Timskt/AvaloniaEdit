@@ -7,12 +7,14 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using AvaloniaEdit.CodeCompletion;
 using AvaloniaEdit.Demo.Resources;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
 using AvaloniaEdit.Folding;
 using AvaloniaEdit.Rendering;
+using AvaloniaEdit.RichTextInput;
 using AvaloniaEdit.TextMate;
 using TextMateSharp.Grammars;
 using Avalonia.Layout;
@@ -33,6 +35,7 @@ namespace AvaloniaEdit.Demo
         private RegistryOptions _registryOptions;
         private int _currentTheme = (int)ThemeName.DarkPlus;
         private CustomMargin _customMargin;
+        private RichTextInputManager _richTextInputManager;
 
         public MainWindow()
         {
@@ -56,9 +59,24 @@ namespace AvaloniaEdit.Demo
 
             AddControlBtn.Click += AddControlButton_Click;
             ClearControlBtn.Click += ClearControlButton_Click;
+            InsertEmojiBtn.Click += InsertEmojiButton_Click;
+            InsertFileCardBtn.Click += InsertFileCardButton_Click;
+            ShowRichPlainTextBtn.Click += ShowRichPlainTextButton_Click;
             InsertSnippetBtn.Click += InsertSnippetButton_Click;
 
             Editor.TextArea.TextView.ElementGenerators.Add(_generator);
+            _richTextInputManager = RichTextInputManager.Install(Editor.TextArea);
+            _richTextInputManager.MaxInlineElementWidth = 240;
+            _richTextInputManager.MaxImageWidth = 190;
+            _richTextInputManager.MaxImageHeight = 130;
+            _richTextInputManager.ElementFactory = CreateRichTextInputElement;
+            _richTextInputManager.ContentPointerPressed += RichTextInputManager_ContentPointerPressed;
+            _richTextInputManager.ContentDoubleTapped += RichTextInputManager_ContentDoubleTapped;
+            _richTextInputManager.ContentContextRequested += RichTextInputManager_ContentContextRequested;
+
+            RichContentAlignmentCombo.ItemsSource = Enum.GetValues<InlineObjectVerticalAlignment>();
+            RichContentAlignmentCombo.SelectedItem = _richTextInputManager.InlineObjectAlignment;
+            RichContentAlignmentCombo.SelectionChanged += RichContentAlignmentCombo_SelectionChanged;
 
             _registryOptions = new RegistryOptions(
                 (ThemeName)_currentTheme);
@@ -182,6 +200,85 @@ namespace AvaloniaEdit.Demo
             return true;
         }
 
+        private Control CreateRichTextInputElement(RichTextContentItem item)
+        {
+            var maxInlineWidth = GetRichContentMaxWidth();
+            if (item.Content.Kind == RichTextContentKind.File || item.Content.Kind == RichTextContentKind.Custom)
+            {
+                return new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(235, 244, 255)),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(59, 130, 246)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(8, 4),
+                    Margin = new Thickness(2, 1),
+                    Child = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 7,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = "ATTACH",
+                                FontSize = 10,
+                                FontWeight = FontWeight.Bold,
+                                Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175)),
+                                VerticalAlignment = VerticalAlignment.Center
+                            },
+                            new TextBlock
+                            {
+                                Text = item.Content.DisplayText,
+                                FontSize = 12,
+                                Foreground = new SolidColorBrush(Color.FromRgb(15, 23, 42)),
+                                TextTrimming = TextTrimming.CharacterEllipsis,
+                                MaxWidth = maxInlineWidth,
+                                VerticalAlignment = VerticalAlignment.Center
+                            }
+                        }
+                    }
+                };
+            }
+
+            if (item.Content.Kind == RichTextContentKind.Image && item.Content.Value is Bitmap bitmap)
+            {
+                return new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(148, 163, 184)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(3),
+                    Margin = new Thickness(2, 1),
+                    Child = new Image
+                    {
+                        Source = bitmap,
+                        Width = Math.Min(_richTextInputManager.MaxImageWidth, Math.Min(maxInlineWidth, Math.Max(48, bitmap.Size.Width))),
+                        Height = Math.Min(_richTextInputManager.MaxImageHeight, Math.Max(48, bitmap.Size.Height)),
+                        Stretch = Stretch.Uniform
+                    }
+                };
+            }
+
+            return new TextBlock
+            {
+                Text = item.Content.DisplayText,
+                FontSize = item.Content.Kind == RichTextContentKind.Emoji ? 18 : 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(1, 0)
+            };
+        }
+
+        private double GetRichContentMaxWidth()
+        {
+            var width = Editor.TextArea.TextView.Bounds.Width;
+            if (double.IsNaN(width) || double.IsInfinity(width) || width <= 0)
+                return _richTextInputManager.MaxInlineElementWidth;
+
+            return Math.Min(_richTextInputManager.MaxInlineElementWidth, Math.Max(_richTextInputManager.MinInlineElementWidth, width - 40));
+        }
+
         private void Caret_PositionChanged(object sender, EventArgs e)
         {
             StatusText.Text = string.Format("Line {0} Column {1}",
@@ -256,6 +353,49 @@ namespace AvaloniaEdit.Demo
             //TODO: delete elements using back key
             _generator.controls.Clear();
             Editor.TextArea.TextView.Redraw();
+        }
+
+        private void InsertEmojiButton_Click(object sender, RoutedEventArgs e)
+        {
+            Editor.TextArea.PerformTextInput("😀");
+            Editor.Focus();
+        }
+
+        private void InsertFileCardButton_Click(object sender, RoutedEventArgs e)
+        {
+            _richTextInputManager.InsertContent(RichTextContent.FromCustom("demo-report.pdf", new { Type = "DemoFile" }));
+            Editor.Focus();
+        }
+
+        private void ShowRichPlainTextButton_Click(object sender, RoutedEventArgs e)
+        {
+            StatusText.Text = _richTextInputManager.GetPlainText(null, item => $"[{item.Content.Kind}:{item.Content.DisplayText}]");
+            Editor.Focus();
+        }
+
+        private void RichContentAlignmentCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (RichContentAlignmentCombo.SelectedItem is InlineObjectVerticalAlignment alignment)
+            {
+                _richTextInputManager.InlineObjectAlignment = alignment;
+                Editor.TextArea.TextView.Redraw();
+                StatusText.Text = $"Rich alignment: {alignment}";
+            }
+        }
+
+        private void RichTextInputManager_ContentPointerPressed(object sender, RichTextContentPointerEventArgs e)
+        {
+            StatusText.Text = $"Selected {e.Item.Content.Kind}: {e.Item.Content.DisplayText}";
+        }
+
+        private void RichTextInputManager_ContentDoubleTapped(object sender, RichTextContentPointerEventArgs e)
+        {
+            StatusText.Text = $"Double tapped {e.Item.Content.Kind}: {e.Item.Content.DisplayText}";
+        }
+
+        private void RichTextInputManager_ContentContextRequested(object sender, RichTextContentPointerEventArgs e)
+        {
+            StatusText.Text = $"Context requested {e.Item.Content.Kind}: {e.Item.Content.DisplayText}";
         }
 
         private void textEditor_TextArea_TextEntering(object sender, TextInputEventArgs e)
