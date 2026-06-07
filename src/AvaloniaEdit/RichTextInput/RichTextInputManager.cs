@@ -156,6 +156,19 @@ namespace AvaloniaEdit.RichTextInput
         public bool Handled { get; set; }
     }
 
+    public sealed class RichTextInlineContentStyle
+    {
+        public IBrush Background { get; set; } = Brushes.Transparent;
+
+        public IBrush BorderBrush { get; set; } = Brushes.Transparent;
+
+        public Thickness BorderThickness { get; set; } = new Thickness(1);
+
+        public CornerRadius CornerRadius { get; set; } = new CornerRadius(4);
+
+        public Thickness Padding { get; set; } = new Thickness(0);
+    }
+
     /// <summary>
     /// A rich content instance attached to a single object-replacement character in the document.
     /// </summary>
@@ -260,6 +273,8 @@ namespace AvaloniaEdit.RichTextInput
         public bool SelectContentOnPointerPressed { get; set; } = true;
 
         public bool HighlightSelectedContent { get; set; } = true;
+
+        public Func<RichTextContentItem, bool, RichTextInlineContentStyle> InlineContentStyleSelector { get; set; }
 
         public Func<RichTextContentItem, bool> CanRemoveContent { get; set; }
 
@@ -398,6 +413,23 @@ namespace AvaloniaEdit.RichTextInput
         public InlineObjectVerticalAlignment GetInlineObjectAlignment(RichTextContentItem item)
         {
             return InlineObjectAlignmentSelector?.Invoke(item) ?? InlineObjectAlignment;
+        }
+
+        public RichTextInlineContentStyle GetInlineContentStyle(RichTextContentItem item, bool selected)
+        {
+            var style = InlineContentStyleSelector?.Invoke(item, selected);
+            if (style != null)
+                return style;
+
+            return selected && HighlightSelectedContent
+                ? new RichTextInlineContentStyle
+                {
+                    Background = Brushes.Transparent,
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(37, 99, 235)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(4)
+                }
+                : new RichTextInlineContentStyle();
         }
 
         public bool CanInsert(IDataTransfer dataTransfer)
@@ -1052,10 +1084,6 @@ namespace AvaloniaEdit.RichTextInput
             _item = item;
             Child = content;
             Focusable = false;
-            Background = Brushes.Transparent;
-            BorderBrush = Brushes.Transparent;
-            BorderThickness = new Thickness(1);
-            CornerRadius = new CornerRadius(4);
             Classes.Add("rich-text-inline-content");
             UpdateSelection();
             _manager.ContentSelectionChanged += Manager_ContentSelectionChanged;
@@ -1112,9 +1140,13 @@ namespace AvaloniaEdit.RichTextInput
 
         private void UpdateSelection()
         {
-            var selected = _manager.HighlightSelectedContent && _manager.IsContentSelected(_item);
-            BorderBrush = selected ? new SolidColorBrush(Color.FromRgb(37, 99, 235)) : Brushes.Transparent;
-            Background = selected ? new SolidColorBrush(Color.FromArgb(28, 37, 99, 235)) : Brushes.Transparent;
+            var selected = _manager.IsContentSelected(_item);
+            var style = _manager.GetInlineContentStyle(_item, selected);
+            Background = style.Background;
+            BorderBrush = style.BorderBrush;
+            BorderThickness = style.BorderThickness;
+            CornerRadius = style.CornerRadius;
+            Padding = style.Padding;
             Classes.Set("selected", selected);
         }
     }

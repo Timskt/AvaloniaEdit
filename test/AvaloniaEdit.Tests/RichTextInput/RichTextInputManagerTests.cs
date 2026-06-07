@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
@@ -282,6 +283,27 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual(InlineObjectVerticalAlignment.Bottom, manager.InlineObjectAlignment);
             Assert.AreEqual(LineContentVerticalAlignment.Top, textArea.Options.LineContentVerticalAlignment);
             Assert.AreEqual(InlineObjectVerticalAlignment.Top, manager.GetInlineObjectAlignment(imageLike));
+        }
+
+        [AvaloniaTest]
+        public void InlineContentStyleSelectorCanCustomizeSelectionVisuals()
+        {
+            var textArea = CreateTextArea("");
+            var manager = RichTextInputManager.Install(textArea);
+            var item = manager.InsertCustom("styled", 1);
+            var selectedBrush = Brushes.Red;
+            manager.InlineContentStyleSelector = (contentItem, selected) => new RichTextInlineContentStyle
+            {
+                Background = selected ? selectedBrush : Brushes.Transparent,
+                BorderThickness = new Thickness(selected ? 2 : 0),
+                CornerRadius = new CornerRadius(8)
+            };
+
+            var style = manager.GetInlineContentStyle(item, true);
+
+            Assert.AreSame(selectedBrush, style.Background);
+            Assert.AreEqual(new Thickness(2), style.BorderThickness);
+            Assert.AreEqual(new CornerRadius(8), style.CornerRadius);
         }
 
         private static TextArea CreateTextArea(string text)

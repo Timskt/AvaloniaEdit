@@ -1206,9 +1206,9 @@ namespace AvaloniaEdit.Rendering
 
                                 var desiredSize = inline.Element.DesiredSize;
                                 var x = pos.X + textLine.GetDistanceFromCharacterHit(new CharacterHit(offset));
-                                var y = pos.Y;
+                                var y = pos.Y + textLine.Baseline - inline.Baseline;
                                 var width = desiredSize.Width;
-                                var height = Math.Max(desiredSize.Height, defaultLineHeight);
+                                var height = desiredSize.Height;
                                 inline.Element.Arrange(new Rect(x, y, width, height));
                             }
 
