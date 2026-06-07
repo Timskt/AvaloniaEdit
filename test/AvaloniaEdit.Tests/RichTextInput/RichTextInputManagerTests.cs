@@ -220,6 +220,43 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void CaretCanMoveAcrossAdjacentRichContentWithKeyboard()
+        {
+            var textArea = CreateTextArea("");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.InsertContent(0, RichTextContent.FromCustom("image", 1));
+            manager.InsertContent(1, RichTextContent.FromFileName("report.pdf"));
+            textArea.Caret.Offset = textArea.Document.TextLength;
+
+            var desiredXPos = double.NaN;
+            var firstLeft = CaretNavigationCommandHandler.GetNewCaretPosition(
+                textArea.TextView,
+                textArea.Caret.Position,
+                CaretMovementType.CharLeft,
+                textArea.Selection.EnableVirtualSpace,
+                ref desiredXPos);
+            var secondLeft = CaretNavigationCommandHandler.GetNewCaretPosition(
+                textArea.TextView,
+                firstLeft,
+                CaretMovementType.CharLeft,
+                textArea.Selection.EnableVirtualSpace,
+                ref desiredXPos);
+            var right = CaretNavigationCommandHandler.GetNewCaretPosition(
+                textArea.TextView,
+                secondLeft,
+                CaretMovementType.CharRight,
+                textArea.Selection.EnableVirtualSpace,
+                ref desiredXPos);
+
+            Assert.AreEqual(1, textArea.Document.GetOffset(firstLeft.Location));
+            Assert.AreEqual(1, firstLeft.VisualColumn);
+            Assert.AreEqual(0, textArea.Document.GetOffset(secondLeft.Location));
+            Assert.AreEqual(0, secondLeft.VisualColumn);
+            Assert.AreEqual(1, textArea.Document.GetOffset(right.Location));
+            Assert.AreEqual(1, right.VisualColumn);
+        }
+
+        [AvaloniaTest]
         public void InlineContentIsBelowImePreeditLayer()
         {
             var textArea = CreateTextArea("ab");

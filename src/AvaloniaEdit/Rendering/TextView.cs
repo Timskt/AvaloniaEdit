@@ -471,7 +471,13 @@ namespace AvaloniaEdit.Rendering
         /// <summary>
         /// Gets/sets the duration used by <see cref="AnimateInlineObjectPlacement"/>.
         /// </summary>
-        public TimeSpan InlineObjectPlacementAnimationDuration { get; set; } = TimeSpan.FromMilliseconds(120);
+        public TimeSpan InlineObjectPlacementAnimationDuration { get; set; } = TimeSpan.FromMilliseconds(220);
+
+        /// <summary>
+        /// Gets/sets the minimum distance required to animate an inline UI object placement change.
+        /// Smaller movements are applied immediately to avoid visible jitter.
+        /// </summary>
+        public double InlineObjectPlacementAnimationMinimumDistance { get; set; } = 2;
 
         /// <summary>
         /// Adds a new inline object.
@@ -1330,7 +1336,8 @@ namespace AvaloniaEdit.Rendering
                 || !RectIsClose(animation.Target, targetRect))
             {
                 var startRect = animation?.GetCurrent(now) ?? currentBounds;
-                if (RectIsClose(startRect, targetRect))
+                if (RectIsClose(startRect, targetRect)
+                    || GetPlacementDistance(startRect, targetRect) < InlineObjectPlacementAnimationMinimumDistance)
                 {
                     _inlineObjectPlacementAnimations.Remove(element);
                     element.Arrange(targetRect);
@@ -1383,6 +1390,11 @@ namespace AvaloniaEdit.Rendering
             return x.X.IsClose(y.X)
                 && x.Y.IsClose(y.Y)
                 && x.Size.IsClose(y.Size);
+        }
+
+        private static double GetPlacementDistance(Rect x, Rect y)
+        {
+            return Math.Max(Math.Abs(x.X - y.X), Math.Abs(x.Y - y.Y));
         }
 
         private sealed class InlineObjectPlacementAnimation

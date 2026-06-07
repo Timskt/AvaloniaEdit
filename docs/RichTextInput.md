@@ -110,7 +110,8 @@ IME 确认、删除文字、插入图片时，同一行的图片/卡片位置可
 
 ```csharp
 editor.TextArea.TextView.AnimateInlineObjectPlacement = true;
-editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(120);
+editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(220);
+editor.TextArea.TextView.InlineObjectPlacementAnimationMinimumDistance = 2;
 ```
 
 ## 中文 IME

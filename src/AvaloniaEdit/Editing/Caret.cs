@@ -312,6 +312,12 @@ namespace AvaloniaEdit.Editing
             _visualColumnValid = false;
         }
 
+        internal void ResetVisualColumn()
+        {
+            _position = new TextViewPosition(_position.Location);
+            InvalidateVisualColumn();
+        }
+
         /// <summary>
         /// Validates the visual column of the caret using the specified visual line.
         /// The visual line must contain the caret offset.
