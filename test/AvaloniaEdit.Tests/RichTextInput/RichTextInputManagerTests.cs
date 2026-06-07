@@ -440,6 +440,19 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void InlineImePreeditPreservesCompositionCursorOffset()
+        {
+            var textArea = CreateTextArea("ab");
+            textArea.Caret.Offset = 1;
+
+            SetPreeditText(textArea, "abcdef", 3);
+            var visualLine = textArea.TextView.GetOrConstructVisualLine(textArea.Document.GetLineByOffset(1));
+            var preedit = visualLine.Elements.OfType<PreeditTextElement>().Single();
+
+            Assert.AreEqual(3, preedit.CursorOffset);
+        }
+
+        [AvaloniaTest]
         public async Task SerializedRichTextSnapshotPreservesStyleKey()
         {
             var sourceTextArea = CreateTextArea("");
@@ -516,6 +529,20 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual("drop-card", manager.Items[0].Content.StyleKey);
         }
 
+        [AvaloniaTest]
+        public void ReplaceRangeWithContentCanTurnMentionQueryIntoInlineContent()
+        {
+            var textArea = CreateTextArea("hello @tim");
+            var manager = RichTextInputManager.Install(textArea);
+
+            var item = manager.ReplaceRangeWithContent(6, 4, RichTextContent.FromCustom("@Tim", 7, "mention-user"));
+
+            Assert.AreEqual("hello " + RichTextInputManager.ObjectReplacementString, textArea.Document.Text);
+            Assert.AreEqual(6, item.Offset);
+            Assert.AreEqual("mention-user", item.Content.StyleKey);
+            Assert.AreEqual(textArea.Document.TextLength, textArea.Caret.Offset);
+        }
+
         private static TextArea CreateTextArea(string text)
         {
             return new TextArea
@@ -524,11 +551,11 @@ namespace AvaloniaEdit.Tests.RichTextInput
             };
         }
 
-        private static void SetPreeditText(TextArea textArea, string text)
+        private static void SetPreeditText(TextArea textArea, string text, int? cursorOffset = null)
         {
             var field = typeof(TextArea).GetField("_imClient", BindingFlags.Instance | BindingFlags.NonPublic);
             var client = (TextInputMethodClient)field.GetValue(textArea);
-            client.SetPreeditText(text);
+            client.SetPreeditText(text, cursorOffset);
         }
 
     }

@@ -882,8 +882,12 @@ namespace AvaloniaEdit.Editing
                 }
                 HideMouseCursor();
                 // Clear preedit text when committed text arrives from IME
-                _imClient.ClearPreedit();
+                var hadPreedit = _imClient.HasPreedit;
+                if (hadPreedit)
+                    _imClient.ClearPreedit(redraw: false);
                 PerformTextInput(e);
+                if (hadPreedit)
+                    TextView.Redraw();
                 e.Handled = true;
             }
         }
@@ -1289,6 +1293,8 @@ namespace AvaloniaEdit.Editing
 
             public override bool SupportsSurroundingText => true;
 
+            public bool HasPreedit => !string.IsNullOrEmpty(_preeditText);
+
             public override string SurroundingText
             {
                 get
@@ -1362,12 +1368,12 @@ namespace AvaloniaEdit.Editing
                 ClearPreedit();
             }
 
-            public void ClearPreedit()
+            public void ClearPreedit(bool redraw = true)
             {
                 _preeditText = null;
                 _preeditCursorOffset = null;
                 _preeditLayer?.Clear();
-                _preeditGenerator?.Clear();
+                _preeditGenerator?.Clear(redraw);
                 ShowCaretIfFocused();
             }
 
