@@ -237,6 +237,8 @@ namespace AvaloniaEdit.RichTextInput
 
         public int Length => Segment.Length;
 
+        public int EndOffset => Segment.EndOffset;
+
         public object Tag { get; set; }
 
         internal AnchorSegment Segment { get; }
@@ -259,7 +261,7 @@ namespace AvaloniaEdit.RichTextInput
     /// <summary>
     /// Configures rich content insertion and inline rendering for a <see cref="TextArea"/>.
     /// </summary>
-    public sealed class RichTextInputManager : IDisposable, IRichTextInputDataHandler
+    public sealed class RichTextInputManager : IDisposable, IRichTextInputDataHandler, ISelectionBackgroundSegmentTransformer
     {
         public const char ObjectReplacementCharacter = '\uFFFC';
         public const string ObjectReplacementString = "\uFFFC";
@@ -276,6 +278,7 @@ namespace AvaloniaEdit.RichTextInput
         private readonly List<RichTextContentItem> _items = new List<RichTextContentItem>();
         private readonly Dictionary<string, Func<RichTextElementFactoryContext, Control>> _elementFactories =
             new Dictionary<string, Func<RichTextElementFactoryContext, Control>>(StringComparer.Ordinal);
+        private bool _suppressTextSelectionBackgroundForRichContent = true;
         private bool _isDisposed;
 
         public RichTextInputManager(TextArea textArea)
@@ -287,6 +290,7 @@ namespace AvaloniaEdit.RichTextInput
 
             _textArea.TextView.ElementGenerators.Add(_generator);
             _textArea.TextView.Services.AddService<IRichTextInputDataHandler>(this);
+            _textArea.TextView.Services.AddService<ISelectionBackgroundSegmentTransformer>(this);
             _textArea.TextView.SizeChanged += TextView_SizeChanged;
             _textArea.DocumentChanged += TextArea_DocumentChanged;
             _textArea.SelectionChanged += TextArea_SelectionChanged;
@@ -332,6 +336,19 @@ namespace AvaloniaEdit.RichTextInput
         public bool SelectContentOnPointerPressed { get; set; } = true;
 
         public bool HighlightSelectedContent { get; set; } = true;
+
+        public bool SuppressTextSelectionBackgroundForRichContent
+        {
+            get => _suppressTextSelectionBackgroundForRichContent;
+            set
+            {
+                if (_suppressTextSelectionBackgroundForRichContent == value)
+                    return;
+
+                _suppressTextSelectionBackgroundForRichContent = value;
+                _textArea.TextView.InvalidateLayer(KnownLayer.Selection);
+            }
+        }
 
         public Func<RichTextContentItem, bool, RichTextInlineContentStyle> InlineContentStyleSelector { get; set; }
 
@@ -600,6 +617,45 @@ namespace AvaloniaEdit.RichTextInput
             _textArea.TextView.ElementGenerators.Remove(_generator);
             if (_textArea.GetService(typeof(IRichTextInputDataHandler)) == this)
                 _textArea.TextView.Services.RemoveService<IRichTextInputDataHandler>();
+            if (_textArea.GetService(typeof(ISelectionBackgroundSegmentTransformer)) == this)
+                _textArea.TextView.Services.RemoveService<ISelectionBackgroundSegmentTransformer>();
+        }
+
+        public IEnumerable<ISegment> TransformSelectionBackgroundSegments(IEnumerable<SelectionSegment> segments)
+        {
+            if (segments == null)
+                yield break;
+
+            if (!SuppressTextSelectionBackgroundForRichContent || _items.Count == 0)
+            {
+                foreach (var segment in segments)
+                    yield return segment;
+                yield break;
+            }
+
+            RemoveInvalidItems();
+            var items = GetItemsInDocumentOrder();
+            foreach (var segment in segments)
+            {
+                var currentOffset = segment.StartOffset;
+                foreach (var item in items)
+                {
+                    if (item.EndOffset <= currentOffset)
+                        continue;
+                    if (item.Offset >= segment.EndOffset)
+                        break;
+
+                    if (item.Offset > currentOffset)
+                        yield return new SimpleSegment(currentOffset, item.Offset - currentOffset);
+
+                    currentOffset = Math.Max(currentOffset, Math.Min(item.EndOffset, segment.EndOffset));
+                    if (currentOffset >= segment.EndOffset)
+                        break;
+                }
+
+                if (currentOffset < segment.EndOffset)
+                    yield return new SimpleSegment(currentOffset, segment.EndOffset - currentOffset);
+            }
         }
 
         private async Task<bool> InsertDataCoreAsync(IDataTransfer dataTransfer, int offset, bool replaceSelection)

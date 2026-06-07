@@ -354,22 +354,24 @@ namespace AvaloniaEdit.Rendering
             protected override void InsertItem(int index, Control item)
             {
                 base.InsertItem(index, item);
-                _textView.VisualChildren.Insert(index, item);
+                _textView.VisualChildren.Insert(Math.Min(index, _textView.VisualChildren.Count), item);
                 _textView.LayersChanged();
             }
 
             protected override void RemoveItem(int index)
             {
+                var item = Items[index];
                 base.RemoveItem(index);
-                _textView.VisualChildren.RemoveAt(index);
+                _textView.VisualChildren.Remove(item);
                 _textView.LayersChanged();
             }
 
             protected override void SetItem(int index, Control item)
             {
-                _textView.VisualChildren.Remove(Items[index]);
+                var oldItem = Items[index];
+                _textView.VisualChildren.Remove(oldItem);
                 base.SetItem(index, item);
-                _textView.VisualChildren.Add(item);
+                _textView.VisualChildren.Insert(Math.Min(index, _textView.VisualChildren.Count), item);
                 _textView.LayersChanged();
             }
         }
@@ -377,6 +379,26 @@ namespace AvaloniaEdit.Rendering
         private void LayersChanged()
         {
             TextLayer.Index = Layers.IndexOf(TextLayer);
+            BringLayersAboveInlineObjectsToFront();
+        }
+
+        private void BringLayersAboveInlineObjectsToFront()
+        {
+            foreach (var layer in Layers.Where(IsLayerAboveInlineObjects).ToArray())
+            {
+                if (VisualChildren.Remove(layer))
+                    VisualChildren.Add(layer);
+            }
+        }
+
+        private static bool IsLayerAboveInlineObjects(Control layer)
+        {
+            var position = LayerPosition.GetLayerPosition(layer);
+            if (position == null)
+                return false;
+
+            return position.KnownLayer > KnownLayer.Text
+                || position.KnownLayer == KnownLayer.Text && position.Position == LayerInsertionPosition.Above;
         }
 
         /// <summary>
@@ -463,6 +485,7 @@ namespace AvaloniaEdit.Rendering
             {
                 VisualChildren.Add(inlineObject.Element);
                 ((ISetLogicalParent)inlineObject.Element).SetParent(this);
+                BringLayersAboveInlineObjectsToFront();
             }
             inlineObject.Element.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             inlineObject.DesiredSize = inlineObject.Element.DesiredSize;

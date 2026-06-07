@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -7,6 +8,7 @@ using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
 using AvaloniaEdit.Rendering;
@@ -322,6 +324,78 @@ namespace AvaloniaEdit.Tests.RichTextInput
             var button = (Button)((Border)control).Child;
 
             Assert.AreEqual("order-card:A001:True", button.Content);
+        }
+
+        [AvaloniaTest]
+        public void SelectionBackgroundSkipsSelectedRichContent()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var item = manager.InsertContent(1, RichTextContent.FromCustom("card", 1));
+
+            var segments = manager.TransformSelectionBackgroundSegments(new[]
+            {
+                new SelectionSegment(item.Offset, item.EndOffset)
+            }).ToArray();
+
+            Assert.AreEqual(0, segments.Length);
+        }
+
+        [AvaloniaTest]
+        public void SelectionBackgroundKeepsTextAroundRichContent()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.InsertContent(1, RichTextContent.FromCustom("card", 1));
+
+            var segments = manager.TransformSelectionBackgroundSegments(new[]
+            {
+                new SelectionSegment(0, textArea.Document.TextLength)
+            }).ToArray();
+
+            Assert.AreEqual(2, segments.Length);
+            Assert.AreEqual(new SimpleSegment(0, 1), new SimpleSegment(segments[0]));
+            Assert.AreEqual(new SimpleSegment(2, 1), new SimpleSegment(segments[1]));
+        }
+
+        [AvaloniaTest]
+        public void SelectionBackgroundCanIncludeRichContentWhenSuppressionIsDisabled()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.SuppressTextSelectionBackgroundForRichContent = false;
+            var item = manager.InsertContent(1, RichTextContent.FromCustom("card", 1));
+
+            var segments = manager.TransformSelectionBackgroundSegments(new[]
+            {
+                new SelectionSegment(item.Offset, item.EndOffset)
+            }).ToArray();
+
+            Assert.AreEqual(1, segments.Length);
+            Assert.AreEqual(new SimpleSegment(item.Offset, item.Length), new SimpleSegment(segments[0]));
+        }
+
+        [AvaloniaTest]
+        public void InlineContentIsBelowImePreeditLayer()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.ElementFactory = item => new Border
+            {
+                Width = 80,
+                Height = 80
+            };
+            manager.InsertContent(1, RichTextContent.FromCustom("card", 1));
+
+            textArea.TextView.Measure(new Size(300, 200));
+            textArea.TextView.Arrange(new Rect(0, 0, 300, 200));
+
+            var children = textArea.TextView.GetVisualChildren().ToArray();
+            var inlineIndex = Array.FindIndex(children, child => child is RichTextInlineContentControl);
+            var preeditIndex = Array.FindIndex(children, child => child is PreeditLayer);
+
+            Assert.GreaterOrEqual(inlineIndex, 0);
+            Assert.Greater(preeditIndex, inlineIndex);
         }
 
         [AvaloniaTest]

@@ -108,7 +108,15 @@ richInput.InlineObjectAlignmentSelector = item =>
 
 ## 选择样式
 
-默认选择态只描边，不铺大块蓝色背景。需要完全自定义时使用 `InlineContentStyleSelector`：
+默认选择态只描边，不铺大块蓝色背景。`SuppressTextSelectionBackgroundForRichContent` 默认是 `true`，选中图片、文件、card 等富内容时会过滤掉对象占位符的普通文本 selection 背景，只保留富内容 wrapper 自己的选中样式。
+
+需要恢复旧式整块文本 selection 背景时关闭它：
+
+```csharp
+richInput.SuppressTextSelectionBackgroundForRichContent = false;
+```
+
+需要完全自定义富内容选中态时使用 `InlineContentStyleSelector`：
 
 ```csharp
 richInput.InlineContentStyleSelector = (item, selected) => new RichTextInlineContentStyle
