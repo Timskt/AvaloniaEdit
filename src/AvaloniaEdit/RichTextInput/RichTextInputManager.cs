@@ -576,6 +576,40 @@ namespace AvaloniaEdit.RichTextInput
             }
         }
 
+        public RichTextContentItem ReplaceRangeWithContent(int offset, int length, RichTextContent content)
+        {
+            if (content == null)
+                throw new ArgumentNullException(nameof(content));
+            if (offset < 0)
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            if (length < 0)
+                throw new ArgumentOutOfRangeException(nameof(length));
+
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            if (offset + length > document.TextLength)
+                throw new ArgumentOutOfRangeException(nameof(length));
+
+            using (document.RunUpdate())
+            {
+                document.Replace(offset, length, ObjectReplacementString, OffsetChangeMappingType.KeepAnchorBeforeInsertion);
+                var item = AddItem(offset, content);
+                if (document.UndoStack.AcceptChanges)
+                    document.UndoStack.Push(new RichTextContentUndoOperation(this, content, offset, true, item));
+
+                _textArea.Caret.Offset = offset + ObjectReplacementString.Length;
+                _textArea.ClearSelection();
+                _textArea.Caret.BringCaretToView();
+                return item;
+            }
+        }
+
+        public Rect GetCaretAnchorRect()
+        {
+            var rect = _textArea.Caret.CalculateCaretRectangle();
+            return rect.WithX(rect.X - _textArea.TextView.HorizontalOffset)
+                .WithY(rect.Y - _textArea.TextView.VerticalOffset);
+        }
+
         public bool TryGetItem(int offset, out RichTextContentItem item)
         {
             RemoveInvalidItems();

@@ -167,6 +167,50 @@ richInput.ContentRemoving += (_, e) =>
 };
 ```
 
+## @ 人和指令弹窗
+
+触发逻辑建议放在业务层：监听文本输入，检测当前 caret 前面的 `@query`，用 `GetCaretAnchorRect()` 把 Popup 放到光标附近；用户选中成员后，用 `ReplaceRangeWithContent` 替换掉 `@query`。
+
+```csharp
+var mentionStart = -1;
+
+editor.TextArea.TextEntered += (_, e) =>
+{
+    var caret = editor.TextArea.Caret.Offset;
+    var text = editor.Document.Text;
+    mentionStart = FindMentionStart(text, caret);
+    if (mentionStart < 0)
+    {
+        mentionPopup.IsOpen = false;
+        return;
+    }
+
+    var query = text.Substring(mentionStart + 1, caret - mentionStart - 1);
+    mentionList.ItemsSource = SearchMembers(query)
+        .Prepend(Member.All); // @全体成员
+
+    var anchor = richInput.GetCaretAnchorRect();
+    mentionPopup.HorizontalOffset = anchor.X;
+    mentionPopup.VerticalOffset = anchor.Bottom;
+    mentionPopup.IsOpen = true;
+};
+
+void CommitMention(Member member)
+{
+    var caret = editor.TextArea.Caret.Offset;
+    if (mentionStart < 0 || caret < mentionStart)
+        return;
+
+    richInput.ReplaceRangeWithContent(
+        mentionStart,
+        caret - mentionStart,
+        RichTextContent.FromCustom("@" + member.DisplayName, member, "mention-user"));
+
+    mentionPopup.IsOpen = false;
+    mentionStart = -1;
+}
+```
+
 ## 粘贴和拖放导入
 
 Ava12 使用 `IDataTransfer/IAsyncDataTransfer`：
