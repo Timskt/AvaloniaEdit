@@ -176,16 +176,12 @@ var mentionStart = -1;
 
 editor.TextArea.TextEntered += (_, e) =>
 {
-    var caret = editor.TextArea.Caret.Offset;
-    var text = editor.Document.Text;
-    mentionStart = FindMentionStart(text, caret);
-    if (mentionStart < 0)
+    if (!richInput.TryGetTextTriggerRange('@', out mentionStart, out var query))
     {
         mentionPopup.IsOpen = false;
         return;
     }
 
-    var query = text.Substring(mentionStart + 1, caret - mentionStart - 1);
     mentionList.ItemsSource = SearchMembers(query)
         .Prepend(Member.All); // @全体成员
 
