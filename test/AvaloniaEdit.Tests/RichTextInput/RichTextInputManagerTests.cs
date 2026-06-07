@@ -543,6 +543,20 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual(textArea.Document.TextLength, textArea.Caret.Offset);
         }
 
+        [AvaloniaTest]
+        public void TryGetTextTriggerRangeFindsQueryBeforeCaret()
+        {
+            var textArea = CreateTextArea("hello @tim");
+            var manager = RichTextInputManager.Install(textArea);
+            textArea.Caret.Offset = textArea.Document.TextLength;
+
+            var found = manager.TryGetTextTriggerRange('@', out var triggerOffset, out var query);
+
+            Assert.IsTrue(found);
+            Assert.AreEqual(6, triggerOffset);
+            Assert.AreEqual("tim", query);
+        }
+
         private static TextArea CreateTextArea(string text)
         {
             return new TextArea

@@ -634,6 +634,33 @@ namespace AvaloniaEdit.RichTextInput
                 .WithY(rect.Y - _textArea.TextView.VerticalOffset);
         }
 
+        public bool TryGetTextTriggerRange(char trigger, out int triggerOffset, out string query)
+        {
+            triggerOffset = -1;
+            query = null;
+
+            var document = _textArea.Document;
+            if (document == null)
+                return false;
+
+            var caretOffset = Math.Max(0, Math.Min(_textArea.Caret.Offset, document.TextLength));
+            for (var offset = caretOffset - 1; offset >= 0; offset--)
+            {
+                var c = document.GetCharAt(offset);
+                if (c == trigger)
+                {
+                    triggerOffset = offset;
+                    query = document.GetText(offset + 1, caretOffset - offset - 1);
+                    return true;
+                }
+
+                if (char.IsWhiteSpace(c) || c == ObjectReplacementCharacter)
+                    break;
+            }
+
+            return false;
+        }
+
         public bool TryGetItem(int offset, out RichTextContentItem item)
         {
             RemoveInvalidItems();
