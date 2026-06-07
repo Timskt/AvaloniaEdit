@@ -306,6 +306,41 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual(new CornerRadius(8), style.CornerRadius);
         }
 
+        [AvaloniaTest]
+        public void RegisteredElementFactoryUsesStyleKeyAndContext()
+        {
+            var textArea = CreateTextArea("");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.RegisterElementFactory("order-card", context =>
+                new Button
+                {
+                    Content = $"{context.StyleKey}:{context.Content.DisplayText}:{context.AvailableWidth > 0}"
+                });
+            var item = manager.InsertCustom("A001", new object(), "order-card");
+
+            var control = manager.CreateElement(item);
+            var button = (Button)((Border)control).Child;
+
+            Assert.AreEqual("order-card:A001:True", button.Content);
+        }
+
+        [AvaloniaTest]
+        public async Task SerializedRichTextSnapshotPreservesStyleKey()
+        {
+            var sourceTextArea = CreateTextArea("");
+            var source = RichTextInputManager.Install(sourceTextArea);
+            source.InsertCustom("A001", new object(), "order-card");
+            var dataTransfer = new DataTransfer();
+            source.TrySetRichClipboardData(dataTransfer, new SimpleSegment(0, sourceTextArea.Document.TextLength));
+
+            var targetTextArea = CreateTextArea("");
+            var target = RichTextInputManager.Install(targetTextArea);
+            var inserted = await target.InsertDataAsync((IDataTransfer)dataTransfer, 0, false);
+
+            Assert.IsTrue(inserted);
+            Assert.AreEqual("order-card", target.Items[0].Content.StyleKey);
+        }
+
         private static TextArea CreateTextArea(string text)
         {
             return new TextArea

@@ -36,12 +36,20 @@ namespace AvaloniaEdit.RichTextInput
     /// </summary>
     public sealed class RichTextContent
     {
-        public RichTextContent(RichTextContentKind kind, string displayText, object value = null, string source = null)
+        public RichTextContent(
+            RichTextContentKind kind,
+            string displayText,
+            object value = null,
+            string source = null,
+            string styleKey = null,
+            IReadOnlyDictionary<string, object> metadata = null)
         {
             Kind = kind;
             DisplayText = displayText ?? string.Empty;
             Value = value;
             Source = source;
+            StyleKey = styleKey;
+            Metadata = metadata ?? new Dictionary<string, object>();
         }
 
         public RichTextContentKind Kind { get; }
@@ -51,6 +59,10 @@ namespace AvaloniaEdit.RichTextInput
         public object Value { get; }
 
         public string Source { get; }
+
+        public string StyleKey { get; }
+
+        public IReadOnlyDictionary<string, object> Metadata { get; }
 
         public static RichTextContent FromText(string text)
         {
@@ -83,9 +95,9 @@ namespace AvaloniaEdit.RichTextInput
             return new RichTextContent(RichTextContentKind.File, Path.GetFileName(fileName), fileName, fileName);
         }
 
-        public static RichTextContent FromCustom(string displayText, object value)
+        public static RichTextContent FromCustom(string displayText, object value, string styleKey = null, IReadOnlyDictionary<string, object> metadata = null)
         {
-            return new RichTextContent(RichTextContentKind.Custom, displayText, value);
+            return new RichTextContent(RichTextContentKind.Custom, displayText, value, null, styleKey, metadata);
         }
     }
 
@@ -117,6 +129,8 @@ namespace AvaloniaEdit.RichTextInput
         public string DisplayText { get; set; }
 
         public string Source { get; set; }
+
+        public string StyleKey { get; set; }
     }
 
     public sealed class RichTextContentChangedEventArgs : EventArgs
@@ -169,6 +183,43 @@ namespace AvaloniaEdit.RichTextInput
         public Thickness Padding { get; set; } = new Thickness(0);
     }
 
+    public sealed class RichTextElementFactoryContext
+    {
+        internal RichTextElementFactoryContext(
+            RichTextInputManager manager,
+            RichTextContentItem item,
+            double availableWidth,
+            bool isSelected)
+        {
+            Manager = manager;
+            Item = item;
+            Content = item.Content;
+            TextArea = manager.TextArea;
+            AvailableWidth = availableWidth;
+            IsSelected = isSelected;
+        }
+
+        public RichTextInputManager Manager { get; }
+
+        public RichTextContentItem Item { get; }
+
+        public RichTextContent Content { get; }
+
+        public TextArea TextArea { get; }
+
+        public double AvailableWidth { get; }
+
+        public double MaxImageWidth => Manager.MaxImageWidth;
+
+        public double MaxImageHeight => Manager.MaxImageHeight;
+
+        public bool IsSelected { get; }
+
+        public string StyleKey => Content.StyleKey;
+
+        public IReadOnlyDictionary<string, object> Metadata => Content.Metadata;
+    }
+
     /// <summary>
     /// A rich content instance attached to a single object-replacement character in the document.
     /// </summary>
@@ -185,6 +236,8 @@ namespace AvaloniaEdit.RichTextInput
         public int Offset => Segment.Offset;
 
         public int Length => Segment.Length;
+
+        public object Tag { get; set; }
 
         internal AnchorSegment Segment { get; }
     }
@@ -221,6 +274,8 @@ namespace AvaloniaEdit.RichTextInput
         private readonly TextArea _textArea;
         private readonly RichTextInlineObjectGenerator _generator;
         private readonly List<RichTextContentItem> _items = new List<RichTextContentItem>();
+        private readonly Dictionary<string, Func<RichTextElementFactoryContext, Control>> _elementFactories =
+            new Dictionary<string, Func<RichTextElementFactoryContext, Control>>(StringComparer.Ordinal);
         private bool _isDisposed;
 
         public RichTextInputManager(TextArea textArea)
@@ -240,9 +295,13 @@ namespace AvaloniaEdit.RichTextInput
 
         public IReadOnlyList<RichTextContentItem> Items => _items;
 
+        public TextArea TextArea => _textArea;
+
         public bool ConvertImageFilesToImages { get; set; }
 
         public Func<RichTextContentItem, Control> ElementFactory { get; set; }
+
+        public Func<RichTextElementFactoryContext, Control> ElementFactoryWithContext { get; set; }
 
         public double MinInlineElementWidth { get; set; } = 48;
 
@@ -350,6 +409,11 @@ namespace AvaloniaEdit.RichTextInput
             return InsertContent(RichTextContent.FromCustom(displayText, value));
         }
 
+        public RichTextContentItem InsertCustom(string displayText, object value, string styleKey, IReadOnlyDictionary<string, object> metadata = null)
+        {
+            return InsertContent(RichTextContent.FromCustom(displayText, value, styleKey, metadata));
+        }
+
         public IReadOnlyList<RichTextContentItem> GetItemsInDocumentOrder()
         {
             RemoveInvalidItems();
@@ -405,9 +469,62 @@ namespace AvaloniaEdit.RichTextInput
 
         public Control CreateElement(RichTextContentItem item)
         {
+            var context = CreateElementFactoryContext(item);
+            Control element = null;
+
+            if (ElementFactoryWithContext != null)
+                element = ElementFactoryWithContext(context);
+
+            if (element == null
+                && !string.IsNullOrEmpty(item.Content.StyleKey)
+                && _elementFactories.TryGetValue(item.Content.StyleKey, out var keyedFactory))
+            {
+                element = keyedFactory(context);
+            }
+
             var factory = ElementFactory;
-            var element = factory?.Invoke(item) ?? CreateDefaultElement(item, GetConstrainedInlineWidth(), MaxImageWidth, MaxImageHeight);
+            element ??= factory?.Invoke(item);
+            element ??= CreateDefaultElement(item, context.AvailableWidth, MaxImageWidth, MaxImageHeight);
             return SelectContentOnPointerPressed ? new RichTextInlineContentControl(this, item, element) : element;
+        }
+
+        public RichTextElementFactoryContext CreateElementFactoryContext(RichTextContentItem item)
+        {
+            if (item == null)
+                throw new ArgumentNullException(nameof(item));
+
+            return new RichTextElementFactoryContext(this, item, GetConstrainedInlineWidth(), IsContentSelected(item));
+        }
+
+        public void RegisterElementFactory(string styleKey, Func<RichTextElementFactoryContext, Control> factory)
+        {
+            if (string.IsNullOrEmpty(styleKey))
+                throw new ArgumentException("A style key is required.", nameof(styleKey));
+            if (factory == null)
+                throw new ArgumentNullException(nameof(factory));
+
+            _elementFactories[styleKey] = factory;
+            _textArea.TextView.Redraw();
+        }
+
+        public bool UnregisterElementFactory(string styleKey)
+        {
+            if (string.IsNullOrEmpty(styleKey))
+                return false;
+
+            var removed = _elementFactories.Remove(styleKey);
+            if (removed)
+                _textArea.TextView.Redraw();
+            return removed;
+        }
+
+        public void ClearElementFactories()
+        {
+            if (_elementFactories.Count == 0)
+                return;
+
+            _elementFactories.Clear();
+            _textArea.TextView.Redraw();
         }
 
         public InlineObjectVerticalAlignment GetInlineObjectAlignment(RichTextContentItem item)
@@ -571,7 +688,8 @@ namespace AvaloniaEdit.RichTextInput
                     Offset = item.Offset - segment.Offset,
                     Kind = item.Content.Kind,
                     DisplayText = item.Content.DisplayText,
-                    Source = item.Content.Source
+                    Source = item.Content.Source,
+                    StyleKey = item.Content.StyleKey
                 })
                 .ToArray();
 
@@ -674,7 +792,7 @@ namespace AvaloniaEdit.RichTextInput
                         && itemOffset < document.TextLength
                         && document.GetCharAt(itemOffset) == ObjectReplacementCharacter)
                     {
-                        var content = new RichTextContent(snapshotItem.Kind, snapshotItem.DisplayText, null, snapshotItem.Source);
+                        var content = new RichTextContent(snapshotItem.Kind, snapshotItem.DisplayText, null, snapshotItem.Source, snapshotItem.StyleKey);
                         var item = AddItem(itemOffset, content);
                         if (document.UndoStack.AcceptChanges)
                             document.UndoStack.Push(new RichTextContentUndoOperation(this, content, itemOffset, true, item));
