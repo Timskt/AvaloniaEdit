@@ -459,6 +459,19 @@ namespace AvaloniaEdit.Rendering
         #region Inline object handling
 
         private readonly List<InlineObjectRun> _inlineObjects = new List<InlineObjectRun>();
+        private readonly Dictionary<Control, InlineObjectPlacementAnimation> _inlineObjectPlacementAnimations =
+            new Dictionary<Control, InlineObjectPlacementAnimation>();
+        private DispatcherTimer _inlineObjectPlacementTimer;
+
+        /// <summary>
+        /// Gets/sets whether inline UI objects should move smoothly when their text line position changes.
+        /// </summary>
+        public bool AnimateInlineObjectPlacement { get; set; }
+
+        /// <summary>
+        /// Gets/sets the duration used by <see cref="AnimateInlineObjectPlacement"/>.
+        /// </summary>
+        public TimeSpan InlineObjectPlacementAnimationDuration { get; set; } = TimeSpan.FromMilliseconds(120);
 
         /// <summary>
         /// Adds a new inline object.
@@ -568,7 +581,10 @@ namespace AvaloniaEdit.Rendering
             }
             ior.VisualLine = null;
             if (!keepElement)
+            {
+                _inlineObjectPlacementAnimations.Remove(ior.Element);
                 VisualChildren.Remove(ior.Element);
+            }
         }
         #endregion
 
@@ -636,6 +652,46 @@ namespace AvaloniaEdit.Rendering
         {
             get => GetValue(LinkTextUnderlineProperty);
             set => SetValue(LinkTextUnderlineProperty, value);
+        }
+
+        private Func<LinkTextStyleContext, LinkTextStyle> _linkTextStyleSelector;
+
+        /// <summary>
+        /// Gets/sets a selector that can style links differently by URI, matched text or link kind.
+        /// </summary>
+        public Func<LinkTextStyleContext, LinkTextStyle> LinkTextStyleSelector
+        {
+            get => _linkTextStyleSelector;
+            set
+            {
+                if (_linkTextStyleSelector == value)
+                    return;
+
+                _linkTextStyleSelector = value;
+                Redraw();
+            }
+        }
+
+        /// <summary>
+        /// Occurs before the default URI opening behavior runs.
+        /// Set <see cref="LinkTextClickedEventArgs.Handled"/> to true to handle the click yourself.
+        /// </summary>
+        public event EventHandler<LinkTextClickedEventArgs> LinkTextClicked;
+
+        internal LinkTextStyle GetLinkTextStyle(LinkTextStyleContext context)
+        {
+            var style = LinkTextStyleSelector?.Invoke(context);
+            return new LinkTextStyle
+            {
+                ForegroundBrush = style?.ForegroundBrush ?? LinkTextForegroundBrush,
+                BackgroundBrush = style?.BackgroundBrush ?? LinkTextBackgroundBrush,
+                Underline = style?.Underline ?? LinkTextUnderline
+            };
+        }
+
+        internal void RaiseLinkTextClicked(LinkTextClickedEventArgs e)
+        {
+            LinkTextClicked?.Invoke(this, e);
         }
 
         #region Redraw methods / VisualLine invalidation
@@ -1232,7 +1288,7 @@ namespace AvaloniaEdit.Rendering
                                 var y = pos.Y + textLine.Baseline - inline.Baseline;
                                 var width = desiredSize.Width;
                                 var height = desiredSize.Height;
-                                inline.Element.Arrange(new Rect(x, y, width, height));
+                                ArrangeInlineObject(inline.Element, new Rect(x, y, width, height));
                             }
 
                             offset += span.Length;
@@ -1247,6 +1303,129 @@ namespace AvaloniaEdit.Rendering
             InvalidateCursorIfPointerWithinTextView();
 
             return finalSize;
+        }
+
+        private void ArrangeInlineObject(Control element, Rect targetRect)
+        {
+            if (!AnimateInlineObjectPlacement
+                || InlineObjectPlacementAnimationDuration <= TimeSpan.Zero)
+            {
+                _inlineObjectPlacementAnimations.Remove(element);
+                element.Arrange(targetRect);
+                return;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var currentBounds = element.Bounds;
+            if (currentBounds.Width <= 0
+                || currentBounds.Height <= 0
+                || !currentBounds.Size.IsClose(targetRect.Size))
+            {
+                _inlineObjectPlacementAnimations.Remove(element);
+                element.Arrange(targetRect);
+                return;
+            }
+
+            if (!_inlineObjectPlacementAnimations.TryGetValue(element, out var animation)
+                || !RectIsClose(animation.Target, targetRect))
+            {
+                var startRect = animation?.GetCurrent(now) ?? currentBounds;
+                if (RectIsClose(startRect, targetRect))
+                {
+                    _inlineObjectPlacementAnimations.Remove(element);
+                    element.Arrange(targetRect);
+                    return;
+                }
+
+                animation = new InlineObjectPlacementAnimation(
+                    startRect,
+                    targetRect,
+                    now,
+                    InlineObjectPlacementAnimationDuration);
+                _inlineObjectPlacementAnimations[element] = animation;
+                EnsureInlineObjectPlacementTimer();
+            }
+
+            var arrangedRect = animation.GetCurrent(now);
+            element.Arrange(arrangedRect);
+            if (animation.IsCompleted(now))
+                _inlineObjectPlacementAnimations.Remove(element);
+        }
+
+        private void EnsureInlineObjectPlacementTimer()
+        {
+            if (_inlineObjectPlacementTimer != null)
+            {
+                if (!_inlineObjectPlacementTimer.IsEnabled)
+                    _inlineObjectPlacementTimer.Start();
+                return;
+            }
+
+            _inlineObjectPlacementTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(16)
+            };
+            _inlineObjectPlacementTimer.Tick += (_, _) =>
+            {
+                if (_inlineObjectPlacementAnimations.Count == 0)
+                {
+                    _inlineObjectPlacementTimer.Stop();
+                    return;
+                }
+
+                InvalidateArrange();
+            };
+            _inlineObjectPlacementTimer.Start();
+        }
+
+        private static bool RectIsClose(Rect x, Rect y)
+        {
+            return x.X.IsClose(y.X)
+                && x.Y.IsClose(y.Y)
+                && x.Size.IsClose(y.Size);
+        }
+
+        private sealed class InlineObjectPlacementAnimation
+        {
+            public InlineObjectPlacementAnimation(Rect start, Rect target, DateTimeOffset startedAt, TimeSpan duration)
+            {
+                Start = start;
+                Target = target;
+                StartedAt = startedAt;
+                Duration = duration;
+            }
+
+            public Rect Start { get; }
+
+            public Rect Target { get; }
+
+            public DateTimeOffset StartedAt { get; }
+
+            public TimeSpan Duration { get; }
+
+            public Rect GetCurrent(DateTimeOffset now)
+            {
+                var progress = Duration <= TimeSpan.Zero
+                    ? 1
+                    : Math.Max(0, Math.Min(1, (now - StartedAt).TotalMilliseconds / Duration.TotalMilliseconds));
+                progress = 1 - Math.Pow(1 - progress, 3);
+
+                return new Rect(
+                    Lerp(Start.X, Target.X, progress),
+                    Lerp(Start.Y, Target.Y, progress),
+                    Lerp(Start.Width, Target.Width, progress),
+                    Lerp(Start.Height, Target.Height, progress));
+            }
+
+            public bool IsCompleted(DateTimeOffset now)
+            {
+                return now - StartedAt >= Duration;
+            }
+
+            private static double Lerp(double start, double end, double progress)
+            {
+                return start + (end - start) * progress;
+            }
         }
         #endregion
 

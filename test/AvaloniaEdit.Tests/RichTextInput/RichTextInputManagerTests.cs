@@ -418,7 +418,7 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.GreaterOrEqual(preeditIndex, 0);
             Assert.Greater(richContentIndex, preeditIndex);
             Assert.AreEqual(0, elements[preeditIndex].DocumentLength);
-            Assert.AreEqual("zhong".Length, elements[preeditIndex].VisualLength);
+            Assert.AreEqual(1, elements[preeditIndex].VisualLength);
         }
 
         [AvaloniaTest]
@@ -435,8 +435,25 @@ namespace AvaloniaEdit.Tests.RichTextInput
 
                 Assert.AreEqual("ab", textArea.Document.Text);
                 Assert.AreEqual(0, preedit.DocumentLength);
-                Assert.AreEqual(preeditText.Length, preedit.VisualLength);
+                Assert.AreEqual(1, preedit.VisualLength);
             }
+        }
+
+        [AvaloniaTest]
+        public void InlineImePreeditRepeatedUpdatesKeepSingleVisualElement()
+        {
+            var textArea = CreateTextArea("ab");
+            textArea.Caret.Offset = 1;
+
+            SetPreeditText(textArea, "ni");
+            SetPreeditText(textArea, "nihao");
+            SetPreeditText(textArea, "nihao");
+
+            var visualLine = textArea.TextView.GetOrConstructVisualLine(textArea.Document.GetLineByOffset(1));
+            var preedit = visualLine.Elements.OfType<PreeditTextElement>().Single();
+
+            Assert.AreEqual("nihao", preedit.Text);
+            Assert.AreEqual("ab", textArea.Document.Text);
         }
 
         [AvaloniaTest]
@@ -555,6 +572,43 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.IsTrue(found);
             Assert.AreEqual(6, triggerOffset);
             Assert.AreEqual("tim", query);
+        }
+
+        [AvaloniaTest]
+        public void TryGetTextTriggerReturnsFullMatch()
+        {
+            var textArea = CreateTextArea("hello @tim");
+            var manager = RichTextInputManager.Install(textArea);
+            textArea.Caret.Offset = textArea.Document.TextLength;
+
+            var found = manager.TryGetTextTrigger(
+                new RichTextTextTriggerOptions
+                {
+                    Trigger = '@',
+                    IsQueryCharacter = c => char.IsLetterOrDigit(c) || c == '_'
+                },
+                out var match);
+
+            Assert.IsTrue(found);
+            Assert.AreEqual('@', match.Trigger);
+            Assert.AreEqual(6, match.TriggerOffset);
+            Assert.AreEqual(textArea.Document.TextLength, match.CaretOffset);
+            Assert.AreEqual(4, match.Length);
+            Assert.AreEqual("tim", match.Query);
+        }
+
+        [AvaloniaTest]
+        public void TryGetTextTriggerStopsAtRichContent()
+        {
+            var textArea = CreateTextArea("@tim ");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.InsertContent(textArea.Document.TextLength, RichTextContent.FromCustom("card", 1));
+            textArea.Document.Insert(textArea.Document.TextLength, "x");
+            textArea.Caret.Offset = textArea.Document.TextLength;
+
+            var found = manager.TryGetTextTrigger(new RichTextTextTriggerOptions { Trigger = '@' }, out _);
+
+            Assert.IsFalse(found);
         }
 
         private static TextArea CreateTextArea(string text)

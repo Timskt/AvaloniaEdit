@@ -1,5 +1,7 @@
 using System;
+using Avalonia;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using Avalonia.Media.TextFormatting;
 using AvaloniaEdit.Editing;
 
@@ -63,7 +65,7 @@ namespace AvaloniaEdit.Rendering
     internal sealed class PreeditTextElement : VisualLineElement
     {
         public PreeditTextElement(string text, int? cursorOffset)
-            : base(Math.Max(1, text?.Length ?? 0), 0)
+            : base(1, 0)
         {
             Text = string.IsNullOrEmpty(text) ? " " : text;
             CursorOffset = Math.Max(0, Math.Min(cursorOffset ?? Text.Length, Text.Length));
@@ -75,16 +77,76 @@ namespace AvaloniaEdit.Rendering
 
         public override TextRun CreateTextRun(int startVisualColumn, ITextRunConstructionContext context)
         {
-            TextRunProperties.SetTextDecorations(TextDecorations.Underline);
-            var relativeOffset = Math.Max(0, startVisualColumn - VisualColumn);
-            relativeOffset = Math.Min(relativeOffset, Text.Length);
-            return new TextCharacters(Text.AsMemory(relativeOffset), TextRunProperties);
+            if (startVisualColumn != VisualColumn)
+                throw new ArgumentOutOfRangeException(nameof(startVisualColumn));
+
+            return new PreeditTextRun(Text, CursorOffset, TextRunProperties);
         }
 
         public override ReadOnlyMemory<char> GetPrecedingText(int visualColumnLimit, ITextRunConstructionContext context)
         {
-            var length = Math.Max(0, Math.Min(visualColumnLimit - VisualColumn, Text.Length));
-            return Text.AsMemory(0, length);
+            return visualColumnLimit > VisualColumn ? Text.AsMemory(0, 1) : ReadOnlyMemory<char>.Empty;
+        }
+    }
+
+    internal sealed class PreeditTextRun : DrawableTextRun
+    {
+        private readonly TextLayout _layout;
+        private readonly TextLayout _cursorPrefixLayout;
+        private readonly int _cursorOffset;
+
+        public PreeditTextRun(string text, int cursorOffset, TextRunProperties properties)
+        {
+            Text = text.AsMemory();
+            Length = 1;
+            Properties = properties ?? throw new ArgumentNullException(nameof(properties));
+            _cursorOffset = Math.Max(0, Math.Min(cursorOffset, text.Length));
+
+            var foreground = Properties.ForegroundBrush ?? Brushes.Black;
+            _layout = new TextLayout(
+                text,
+                Properties.Typeface,
+                Properties.FontRenderingEmSize,
+                foreground,
+                textWrapping: TextWrapping.NoWrap);
+
+            _cursorPrefixLayout = new TextLayout(
+                text.Substring(0, _cursorOffset),
+                Properties.Typeface,
+                Properties.FontRenderingEmSize,
+                foreground,
+                textWrapping: TextWrapping.NoWrap);
+        }
+
+        public override ReadOnlyMemory<char> Text { get; }
+
+        public override TextRunProperties Properties { get; }
+
+        public override int Length { get; }
+
+        public override double Baseline => _layout.Baseline;
+
+        public override Size Size => new Size(
+            Math.Max(1, _layout.WidthIncludingTrailingWhitespace),
+            Math.Max(1, _layout.Height));
+
+        public override void Draw(DrawingContext drawingContext, Point origin)
+        {
+            _layout.Draw(drawingContext, origin);
+
+            var foreground = Properties.ForegroundBrush ?? Brushes.Black;
+            var pen = new ImmutablePen(foreground.ToImmutable(), 1);
+            var underlineY = origin.Y + Size.Height - 1;
+            drawingContext.DrawLine(
+                pen,
+                new Point(origin.X, underlineY),
+                new Point(origin.X + Size.Width, underlineY));
+
+            var cursorX = origin.X + _cursorPrefixLayout.WidthIncludingTrailingWhitespace;
+            drawingContext.DrawLine(
+                new ImmutablePen(foreground.ToImmutable(), 1),
+                new Point(cursorX, origin.Y),
+                new Point(cursorX, origin.Y + Size.Height));
         }
     }
 }

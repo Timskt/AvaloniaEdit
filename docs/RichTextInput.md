@@ -106,6 +106,13 @@ richInput.InlineObjectAlignmentSelector = item =>
         : InlineObjectVerticalAlignment.Center;
 ```
 
+IME 确认、删除文字、插入图片时，同一行的图片/卡片位置可能会变化。需要更接近聊天输入框的顺滑体验时，可以打开 inline object 位置过渡：
+
+```csharp
+editor.TextArea.TextView.AnimateInlineObjectPlacement = true;
+editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(120);
+```
+
 ## 中文 IME
 
 默认使用 QQ 输入框式的 inline composition。输入法组合阶段的拼音、字母或候选前文本会作为临时 visual element 插入到光标位置，占住同一行布局，但不会写入 `TextDocument`、不会进入 undo stack，也不会参与复制/序列化。输入法确认后，提交文本仍走 AvaloniaEdit 原有 `TextInput` 路径。
@@ -169,13 +176,19 @@ richInput.ContentRemoving += (_, e) =>
 
 ## @ 人和指令弹窗
 
-触发逻辑建议放在业务层：监听文本输入、粘贴或业务命令后，检测当前 caret 前面的 `@query`，用 `GetCaretAnchorRect()` 把 Popup 放到光标附近；用户选中成员后，用 `ReplaceRangeWithContent` 替换掉 `@query`。
+触发逻辑建议放在业务层：按键事件只用来“提前感知用户按了 @”，真正判断统一基于 caret 前面的文档文本。这样键盘输入、中文/日文/韩文 IME 提交、粘贴、拖放、程序插入文本以后，都可以调用同一个 `UpdateMentionPopup()`。
 
 ```csharp
 var mentionStart = -1;
 
 editor.TextArea.TextEntered += (_, e) =>
     UpdateMentionPopup();
+
+editor.TextArea.KeyDown += (_, e) =>
+{
+    if (e.KeySymbol == "@")
+        OpenEmptyMentionPopupEarly();
+};
 
 // 在 PasteHandler、DropHandler 或业务主动插入文本后，也调用 UpdateMentionPopup()。
 
@@ -212,11 +225,28 @@ void CommitMention(Member member)
 }
 ```
 
-按键事件可以用来更早地知道用户按下了 `@`，但它覆盖不了粘贴、IME 提交和程序写入文本。实际业务里建议把“检测当前触发范围并刷新 Popup”封装成一个方法，在 `TextEntered`、`PasteHandler`、候选列表键盘操作后统一调用。
+需要更多控制时用 `TryGetTextTrigger`：
+
+```csharp
+if (richInput.TryGetTextTrigger(
+    new RichTextTextTriggerOptions
+    {
+        Trigger = '@',
+        MaxQueryLength = 32,
+        AllowEmptyQuery = true,
+        IsQueryCharacter = c => char.IsLetterOrDigit(c) || c == '_' || c == '-'
+    },
+    out var match))
+{
+    // match.TriggerOffset / match.CaretOffset / match.Query
+}
+```
+
+如果用户从别处复制 `@张三` 粘进来，通常也应该触发候选逻辑；这和 QQ/IM 输入框的体验更一致。
 
 ## URL 和邮箱链接
 
-普通文本里的 URL/邮箱可以直接使用 AvaloniaEdit 内置链接识别：
+发送框里建议先按普通文本输入，避免链接点击干扰编辑；消息发出后，在“会话消息展示框”里用同一份 `GetValue()` 或普通文本启用链接识别。普通 URL/邮箱可以直接使用 AvaloniaEdit 内置链接识别：
 
 ```csharp
 editor.Options.EnableHyperlinks = true;
@@ -228,7 +258,54 @@ editor.TextArea.TextView.LinkTextBackgroundBrush = Brushes.Transparent;
 editor.TextArea.TextView.LinkTextUnderline = true;
 ```
 
-更复杂的协议可以继承 `LinkElementGenerator`，用自己的 regex 和跳转逻辑。
+不同链接类型可以设置不同样式，也可以接管点击：
+
+```csharp
+messageView.TextArea.TextView.LinkTextStyleSelector = context =>
+{
+    if (context.LinkKind == "ip")
+        return new LinkTextStyle
+        {
+            ForegroundBrush = Brushes.DarkOrange,
+            BackgroundBrush = Brushes.Transparent,
+            Underline = false
+        };
+
+    return new LinkTextStyle
+    {
+        ForegroundBrush = Brushes.DodgerBlue,
+        BackgroundBrush = Brushes.Transparent,
+        Underline = true
+    };
+};
+
+messageView.TextArea.TextView.LinkTextClicked += (_, e) =>
+{
+    if (e.LinkKind == "ip")
+    {
+        OpenIpPanel(e.Text);
+        e.Handled = true; // 阻止默认 OpenUri。
+    }
+};
+```
+
+IPv4 可以直接使用内置工厂：
+
+```csharp
+messageView.TextArea.TextView.ElementGenerators.Add(
+    LinkElementGenerator.CreateIpAddressGenerator());
+```
+
+IP、工单号、内部协议等也可以注册自定义 `LinkElementGenerator`：
+
+```csharp
+messageView.TextArea.TextView.ElementGenerators.Add(new LinkElementGenerator(
+    new Regex(@"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+    match => new Uri("im://ip/" + match.Value),
+    linkKind: "ip"));
+```
+
+`LinkKind` 可以按业务扩展为 `url`、`email`、`ip`、`user`、`ticket`、`topic` 等。简单跳转用默认 `OpenUriEvent`，复杂行为用 `LinkTextClicked` 拦截。
 
 ## 粘贴和拖放导入
 
