@@ -90,6 +90,24 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void CaretHeightUsesTextMetricsWhenInlineContentMakesLineTall()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.ElementFactory = item => new Border
+            {
+                Width = 24,
+                Height = 100
+            };
+            manager.InsertContent(1, RichTextContent.FromCustom("tall", 1));
+            textArea.Caret.Offset = 0;
+
+            var caretRectangle = textArea.Caret.CalculateCaretRectangle();
+
+            Assert.Less(caretRectangle.Height, 40);
+        }
+
+        [AvaloniaTest]
         public void CustomElementFactoryIsWrappedForSelection()
         {
             var textArea = CreateTextArea("");
