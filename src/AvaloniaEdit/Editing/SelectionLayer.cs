@@ -17,6 +17,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 using System;
+using System.Collections.Generic;
+using AvaloniaEdit.Document;
 using AvaloniaEdit.Rendering;
 using Avalonia.Media;
 
@@ -55,7 +57,7 @@ namespace AvaloniaEdit.Editing
                 CornerRadius = _textArea.SelectionCornerRadius
             };
 
-            foreach (var segment in _textArea.Selection.Segments)
+            foreach (var segment in GetSelectionBackgroundSegments())
             {
                 geoBuilder.AddSegment(TextView, segment);
             }
@@ -65,6 +67,13 @@ namespace AvaloniaEdit.Editing
             {
                 drawingContext.DrawGeometry(_textArea.SelectionBrush, selectionBorder, geometry);
             }
+        }
+
+        private IEnumerable<ISegment> GetSelectionBackgroundSegments()
+        {
+            var segments = _textArea.Selection.Segments;
+            var transformer = _textArea.GetService(typeof(ISelectionBackgroundSegmentTransformer)) as ISelectionBackgroundSegmentTransformer;
+            return transformer?.TransformSelectionBackgroundSegments(segments) ?? segments;
         }
     }
 }
