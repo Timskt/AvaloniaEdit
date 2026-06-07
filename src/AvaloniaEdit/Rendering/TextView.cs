@@ -42,6 +42,14 @@ using AvaloniaEdit.Utils;
 
 namespace AvaloniaEdit.Rendering
 {
+    public enum InlineObjectPlacementAnimationEasing
+    {
+        Linear,
+        EaseOutCubic,
+        SmoothStep,
+        SmootherStep
+    }
+
     /// <summary>
     /// A virtualizing panel producing+showing <see cref="VisualLine"/>s for a <see cref="TextDocument"/>.
     /// 
@@ -67,6 +75,7 @@ namespace AvaloniaEdit.Rendering
 
         private readonly ColumnRulerRenderer _columnRulerRenderer;
         private readonly CurrentLineHighlightRenderer _currentLineHighlightRenderer;
+        private Func<CurrentLineHighlightContext, CurrentLineHighlightStyle> _currentLineHighlightStyleSelector;
         private VisualLineElement _currentHoveredElement;
 
         /// <summary>
@@ -478,6 +487,18 @@ namespace AvaloniaEdit.Rendering
         /// Smaller movements are applied immediately to avoid visible jitter.
         /// </summary>
         public double InlineObjectPlacementAnimationMinimumDistance { get; set; } = 2;
+
+        /// <summary>
+        /// Gets/sets how inline UI object placement animations should ease between positions.
+        /// </summary>
+        public InlineObjectPlacementAnimationEasing InlineObjectPlacementAnimationEasing { get; set; } =
+            InlineObjectPlacementAnimationEasing.SmootherStep;
+
+        /// <summary>
+        /// Gets/sets the multiplier applied when an inline object receives a new target while already animating.
+        /// Values greater than 1 soften rapid IME/layout retargeting.
+        /// </summary>
+        public double InlineObjectPlacementAnimationRetargetDurationMultiplier { get; set; } = 1.2;
 
         /// <summary>
         /// Adds a new inline object.
@@ -1344,11 +1365,19 @@ namespace AvaloniaEdit.Rendering
                     return;
                 }
 
+                var duration = InlineObjectPlacementAnimationDuration;
+                if (animation != null)
+                {
+                    var multiplier = Math.Max(1, InlineObjectPlacementAnimationRetargetDurationMultiplier);
+                    duration = TimeSpan.FromMilliseconds(duration.TotalMilliseconds * multiplier);
+                }
+
                 animation = new InlineObjectPlacementAnimation(
                     startRect,
                     targetRect,
                     now,
-                    InlineObjectPlacementAnimationDuration);
+                    duration,
+                    InlineObjectPlacementAnimationEasing);
                 _inlineObjectPlacementAnimations[element] = animation;
                 EnsureInlineObjectPlacementTimer();
             }
@@ -1399,12 +1428,18 @@ namespace AvaloniaEdit.Rendering
 
         private sealed class InlineObjectPlacementAnimation
         {
-            public InlineObjectPlacementAnimation(Rect start, Rect target, DateTimeOffset startedAt, TimeSpan duration)
+            public InlineObjectPlacementAnimation(
+                Rect start,
+                Rect target,
+                DateTimeOffset startedAt,
+                TimeSpan duration,
+                InlineObjectPlacementAnimationEasing easing)
             {
                 Start = start;
                 Target = target;
                 StartedAt = startedAt;
                 Duration = duration;
+                Easing = easing;
             }
 
             public Rect Start { get; }
@@ -1415,12 +1450,14 @@ namespace AvaloniaEdit.Rendering
 
             public TimeSpan Duration { get; }
 
+            public InlineObjectPlacementAnimationEasing Easing { get; }
+
             public Rect GetCurrent(DateTimeOffset now)
             {
                 var progress = Duration <= TimeSpan.Zero
                     ? 1
                     : Math.Max(0, Math.Min(1, (now - StartedAt).TotalMilliseconds / Duration.TotalMilliseconds));
-                progress = 1 - Math.Pow(1 - progress, 3);
+                progress = Ease(progress, Easing);
 
                 return new Rect(
                     Lerp(Start.X, Target.X, progress),
@@ -1437,6 +1474,19 @@ namespace AvaloniaEdit.Rendering
             private static double Lerp(double start, double end, double progress)
             {
                 return start + (end - start) * progress;
+            }
+
+            private static double Ease(double progress, InlineObjectPlacementAnimationEasing easing)
+            {
+                return easing switch
+                {
+                    InlineObjectPlacementAnimationEasing.Linear => progress,
+                    InlineObjectPlacementAnimationEasing.EaseOutCubic => 1 - Math.Pow(1 - progress, 3),
+                    InlineObjectPlacementAnimationEasing.SmoothStep => progress * progress * (3 - 2 * progress),
+                    InlineObjectPlacementAnimationEasing.SmootherStep =>
+                        progress * progress * progress * (progress * (progress * 6 - 15) + 10),
+                    _ => progress
+                };
             }
         }
         #endregion
@@ -2250,6 +2300,43 @@ namespace AvaloniaEdit.Rendering
         {
             get => GetValue(CurrentLineBorderProperty);
             set => SetValue(CurrentLineBorderProperty, value);
+        }
+
+        /// <summary>
+        /// Gets/Sets a selector that can customize the current-line highlight rectangle per line.
+        /// Return null to use <see cref="CurrentLineBackground"/> and <see cref="CurrentLineBorder"/>.
+        /// </summary>
+        public Func<CurrentLineHighlightContext, CurrentLineHighlightStyle> CurrentLineHighlightStyleSelector
+        {
+            get => _currentLineHighlightStyleSelector;
+            set
+            {
+                if (_currentLineHighlightStyleSelector == value)
+                    return;
+
+                _currentLineHighlightStyleSelector = value;
+                InvalidateLayer(KnownLayer.Background);
+            }
+        }
+
+        internal CurrentLineHighlightStyle GetCurrentLineHighlightStyle(
+            VisualLine visualLine,
+            Rect lineRectangle,
+            double textWidth)
+        {
+            var style = CurrentLineHighlightStyleSelector?.Invoke(new CurrentLineHighlightContext(
+                this,
+                visualLine,
+                visualLine?.FirstDocumentLine?.LineNumber ?? 0,
+                lineRectangle,
+                textWidth));
+
+            return style ?? new CurrentLineHighlightStyle
+            {
+                BackgroundBrush = CurrentLineBackground,
+                BorderPen = CurrentLineBorder,
+                ExtendToViewportWidth = true
+            };
         }
 
         /// <summary>

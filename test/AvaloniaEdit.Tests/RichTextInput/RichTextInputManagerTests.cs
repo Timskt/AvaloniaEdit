@@ -378,6 +378,49 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void SelectionValueIncludesSelectedTextAndRichContent()
+        {
+            var textArea = CreateTextArea("a bc d");
+            var manager = RichTextInputManager.Install(textArea);
+            var item = manager.InsertContent(2, RichTextContent.FromCustom("card", 7, "card"));
+            textArea.Selection = Selection.Create(textArea, 1, 5);
+
+            var value = manager.GetSelectionValue();
+            var plainText = manager.GetSelectedPlainText(selectedItem => $"[{selectedItem.Content.DisplayText}]");
+            var selectedItems = manager.GetSelectedItems();
+
+            Assert.AreEqual(" " + RichTextInputManager.ObjectReplacementString + "bc", value.Text);
+            Assert.AreEqual(1, value.Items.Count);
+            Assert.AreSame(item.Content, value.Items[0].Content);
+            Assert.AreEqual(1, value.Items[0].Offset);
+            Assert.AreEqual(" [card]bc", plainText);
+            Assert.AreEqual(1, selectedItems.Count);
+            Assert.AreSame(item, selectedItems[0]);
+        }
+
+        [AvaloniaTest]
+        public void PointerSelectionBehaviorSelectorCanPreserveTextSelection()
+        {
+            var textArea = CreateTextArea("abcd");
+            var manager = RichTextInputManager.Install(textArea);
+            var item = manager.InsertContent(2, RichTextContent.FromCustom("card", 7, "card"));
+            textArea.Selection = Selection.Create(textArea, 0, 1);
+            manager.ContentPointerSelectionBehaviorSelector = args =>
+                args.Item.Content.StyleKey == "card"
+                    ? RichTextContentPointerSelectionBehavior.None
+                    : RichTextContentPointerSelectionBehavior.SelectContent;
+
+            manager.ApplyContentPointerSelection(new RichTextContentPointerEventArgs(
+                manager,
+                item,
+                null,
+                RichTextContentPointerEventKind.PointerPressed));
+
+            Assert.AreEqual(0, textArea.Selection.SurroundingSegment.Offset);
+            Assert.AreEqual(1, textArea.Selection.SurroundingSegment.EndOffset);
+        }
+
+        [AvaloniaTest]
         public void CaretCanMoveAcrossAdjacentRichContentWithKeyboard()
         {
             var textArea = CreateTextArea("");

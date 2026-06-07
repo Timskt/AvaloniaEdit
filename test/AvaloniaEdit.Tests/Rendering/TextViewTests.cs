@@ -125,5 +125,33 @@ namespace AvaloniaEdit.Tests.Rendering
             Assert.AreSame(Brushes.DarkOrange, style.ForegroundBrush);
             Assert.IsFalse(style.Underline);
         }
+
+        [AvaloniaTest]
+        public void Current_Line_Style_Selector_Can_Customize_Rectangle()
+        {
+            var textView = new TextView();
+            var document = new TextDocument("hello");
+            var border = new Pen(Brushes.Red, 2);
+            textView.Document = document;
+            textView.CurrentLineHighlightStyleSelector = context => new CurrentLineHighlightStyle
+            {
+                BackgroundBrush = Brushes.Yellow,
+                BorderPen = border,
+                CornerRadius = new CornerRadius(3),
+                Margin = new Thickness(1),
+                ExtendToViewportWidth = false,
+                MinWidth = 40
+            };
+
+            var visualLine = textView.GetOrConstructVisualLine(document.Lines[0]);
+            var style = textView.GetCurrentLineHighlightStyle(visualLine, new Rect(0, 0, 100, 20), 32);
+
+            Assert.AreSame(Brushes.Yellow, style.BackgroundBrush);
+            Assert.AreSame(border, style.BorderPen);
+            Assert.AreEqual(new CornerRadius(3), style.CornerRadius);
+            Assert.AreEqual(new Thickness(1), style.Margin);
+            Assert.IsFalse(style.ExtendToViewportWidth);
+            Assert.AreEqual(40, style.MinWidth);
+        }
     }
 }

@@ -71,7 +71,10 @@ namespace AvaloniaEdit.Demo
 
             Editor.TextArea.TextView.ElementGenerators.Add(_generator);
             Editor.TextArea.TextView.AnimateInlineObjectPlacement = true;
-            Editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(220);
+            Editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(260);
+            Editor.TextArea.TextView.InlineObjectPlacementAnimationEasing = InlineObjectPlacementAnimationEasing.SmootherStep;
+            Editor.TextArea.TextView.InlineObjectPlacementAnimationRetargetDurationMultiplier = 1.2;
+            Editor.TextArea.TextView.CurrentLineHighlightStyleSelector = CreateCurrentLineHighlightStyle;
             Editor.TextArea.TextView.ElementGenerators.Add(LinkElementGenerator.CreateIpAddressGenerator());
             Editor.TextArea.TextView.LinkTextStyleSelector = CreateLinkTextStyle;
             Editor.TextArea.TextView.LinkTextClicked += TextView_LinkTextClicked;
@@ -323,6 +326,18 @@ namespace AvaloniaEdit.Demo
             };
         }
 
+        private CurrentLineHighlightStyle CreateCurrentLineHighlightStyle(CurrentLineHighlightContext context)
+        {
+            return new CurrentLineHighlightStyle
+            {
+                BackgroundBrush = new SolidColorBrush(Color.FromArgb(28, 59, 130, 246)),
+                BorderPen = new Pen(new SolidColorBrush(Color.FromArgb(72, 37, 99, 235)), 1),
+                CornerRadius = new CornerRadius(4),
+                Margin = new Thickness(1, 1),
+                ExtendToViewportWidth = true
+            };
+        }
+
         private void TextView_LinkTextClicked(object sender, LinkTextClickedEventArgs e)
         {
             if (e.LinkKind == "ip")
@@ -450,7 +465,7 @@ namespace AvaloniaEdit.Demo
 
         private void RichTextInputManager_ContentPointerPressed(object sender, RichTextContentPointerEventArgs e)
         {
-            StatusText.Text = $"Selected {e.Item.Content.Kind}: {e.Item.Content.DisplayText}";
+            StatusText.Text = $"Selected {e.Item.Content.Kind}: {e.Item.Content.DisplayText}; selection={e.GetSelectedPlainText(item => item.Content.DisplayText)}";
         }
 
         private void RichTextInputManager_ContentDoubleTapped(object sender, RichTextContentPointerEventArgs e)
@@ -460,7 +475,8 @@ namespace AvaloniaEdit.Demo
 
         private void RichTextInputManager_ContentContextRequested(object sender, RichTextContentPointerEventArgs e)
         {
-            StatusText.Text = $"Context requested {e.Item.Content.Kind}: {e.Item.Content.DisplayText}";
+            var selected = e.GetSelectedItems().Count;
+            StatusText.Text = $"Context requested {e.Item.Content.Kind}: {e.Item.Content.DisplayText}; selected items={selected}";
         }
 
         private void textEditor_TextArea_TextEntering(object sender, TextInputEventArgs e)

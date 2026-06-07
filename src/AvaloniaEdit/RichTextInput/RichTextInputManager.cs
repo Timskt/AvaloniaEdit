@@ -331,19 +331,99 @@ namespace AvaloniaEdit.RichTextInput
         public bool Cancel { get; set; }
     }
 
+    public enum RichTextContentPointerEventKind
+    {
+        PointerPressed,
+        PointerReleased,
+        DoubleTapped,
+        ContextRequested
+    }
+
+    public enum RichTextContentPointerSelectionBehavior
+    {
+        None,
+        SelectContent,
+        PreserveSelection,
+        ExtendSelection
+    }
+
     public sealed class RichTextContentPointerEventArgs : EventArgs
     {
         public RichTextContentPointerEventArgs(RichTextContentItem item, RoutedEventArgs routedEventArgs)
+            : this(null, item, routedEventArgs, RichTextContentPointerEventKind.PointerPressed)
         {
+        }
+
+        internal RichTextContentPointerEventArgs(
+            RichTextInputManager manager,
+            RichTextContentItem item,
+            RoutedEventArgs routedEventArgs,
+            RichTextContentPointerEventKind eventKind)
+        {
+            Manager = manager;
             Item = item ?? throw new ArgumentNullException(nameof(item));
             RoutedEventArgs = routedEventArgs;
+            EventKind = eventKind;
         }
+
+        public RichTextInputManager Manager { get; }
 
         public RichTextContentItem Item { get; }
 
         public RoutedEventArgs RoutedEventArgs { get; }
 
+        public RichTextContentPointerEventKind EventKind { get; }
+
+        public TextArea TextArea => Manager?.TextArea;
+
+        public PointerEventArgs PointerEventArgs => RoutedEventArgs as PointerEventArgs;
+
+        public TappedEventArgs TappedEventArgs => RoutedEventArgs as TappedEventArgs;
+
+        public ContextRequestedEventArgs ContextRequestedEventArgs => RoutedEventArgs as ContextRequestedEventArgs;
+
+        public bool IsSelected => Manager?.IsContentSelected(Item) == true;
+
+        public KeyModifiers KeyModifiers => PointerEventArgs?.KeyModifiers ?? KeyModifiers.None;
+
+        public bool IsLeftButtonPressed => PointerEventArgs?
+            .GetCurrentPoint(TextArea)
+            .Properties
+            .IsLeftButtonPressed == true;
+
+        public bool IsRightButtonPressed => PointerEventArgs?
+            .GetCurrentPoint(TextArea)
+            .Properties
+            .IsRightButtonPressed == true;
+
         public bool Handled { get; set; }
+
+        public bool TryGetPosition(Control relativeTo, out Point position)
+        {
+            if (PointerEventArgs == null)
+            {
+                position = default;
+                return false;
+            }
+
+            position = PointerEventArgs.GetPosition(relativeTo ?? TextArea);
+            return true;
+        }
+
+        public IReadOnlyList<RichTextContentItem> GetSelectedItems()
+        {
+            return Manager?.GetSelectedItems() ?? Array.Empty<RichTextContentItem>();
+        }
+
+        public RichTextInputValue GetSelectionValue()
+        {
+            return Manager?.GetSelectionValue() ?? new RichTextInputValue();
+        }
+
+        public string GetSelectedPlainText(Func<RichTextContentItem, string> contentTextFactory = null)
+        {
+            return Manager?.GetSelectedPlainText(contentTextFactory) ?? string.Empty;
+        }
     }
 
     public sealed class RichTextInlineContentStyle
@@ -515,6 +595,8 @@ namespace AvaloniaEdit.RichTextInput
 
         public bool SelectContentOnPointerPressed { get; set; } = true;
 
+        public bool EnableContentPointerInteractions { get; set; } = true;
+
         public bool HighlightSelectedContent { get; set; } = true;
 
         public bool SuppressTextSelectionBackgroundForRichContent
@@ -533,6 +615,15 @@ namespace AvaloniaEdit.RichTextInput
         public Func<RichTextContentItem, bool, RichTextInlineContentStyle> InlineContentStyleSelector { get; set; }
 
         public Func<RichTextContentItem, bool> CanRemoveContent { get; set; }
+
+        public RichTextContentPointerSelectionBehavior ContentPointerSelectionBehavior { get; set; } =
+            RichTextContentPointerSelectionBehavior.SelectContent;
+
+        public Func<RichTextContentPointerEventArgs, RichTextContentPointerSelectionBehavior> ContentPointerSelectionBehaviorSelector { get; set; }
+
+        public bool HandleContentPointerEvents { get; set; } = true;
+
+        public Func<RichTextContentPointerEventArgs, bool> ContentPointerHandledSelector { get; set; }
 
         public event EventHandler<RichTextContentChangedEventArgs> ContentInserted;
 
@@ -615,6 +706,18 @@ namespace AvaloniaEdit.RichTextInput
         {
             RemoveInvalidItems();
             return _items.OrderBy(item => item.Offset).ToArray();
+        }
+
+        public IReadOnlyList<RichTextContentItem> GetSelectedItems()
+        {
+            if (_textArea.Selection.IsEmpty)
+                return Array.Empty<RichTextContentItem>();
+
+            var segments = GetOrderedSelectionSegments();
+            return GetItemsInDocumentOrder()
+                .Where(item => segments.Any(segment =>
+                    item.Offset >= segment.StartOffset && item.EndOffset <= segment.EndOffset))
+                .ToArray();
         }
 
         public bool RemoveContent(RichTextContentItem item)
@@ -772,7 +875,7 @@ namespace AvaloniaEdit.RichTextInput
             var factory = ElementFactory;
             element ??= factory?.Invoke(item);
             element ??= CreateDefaultElement(item, context.AvailableWidth, MaxImageWidth, MaxImageHeight);
-            return SelectContentOnPointerPressed ? new RichTextInlineContentControl(this, item, element) : element;
+            return EnableContentPointerInteractions ? new RichTextInlineContentControl(this, item, element) : element;
         }
 
         public RichTextElementFactoryContext CreateElementFactoryContext(RichTextContentItem item)
@@ -1123,6 +1226,72 @@ namespace AvaloniaEdit.RichTextInput
             return new RichTextInputValue(text, items);
         }
 
+        public RichTextInputValue GetSelectionValue()
+        {
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            if (_textArea.Selection.IsEmpty)
+                return new RichTextInputValue();
+
+            var text = new System.Text.StringBuilder();
+            var items = new List<RichTextInputValueItem>();
+            foreach (var segment in GetOrderedSelectionSegments())
+            {
+                var baseOffset = text.Length;
+                var value = GetValue(new SimpleSegment(segment.StartOffset, segment.EndOffset - segment.StartOffset));
+                text.Append(value.Text);
+                foreach (var item in value.Items)
+                {
+                    items.Add(new RichTextInputValueItem
+                    {
+                        Offset = baseOffset + item.Offset,
+                        Content = item.Content
+                    });
+                }
+            }
+
+            return new RichTextInputValue(text.ToString(), items);
+        }
+
+        public RichTextInputValue GetSelectedValue()
+        {
+            return GetSelectionValue();
+        }
+
+        public RichTextInputSnapshot GetSelectionSnapshot(bool removeObjectReplacementCharacters = false)
+        {
+            var value = GetSelectionValue();
+            var snapshot = new RichTextInputSnapshot(
+                value.Text,
+                value.Items.Select(item => new RichTextInputSnapshotItem
+                {
+                    Offset = item.Offset,
+                    Kind = item.Content.Kind,
+                    DisplayText = item.Content.DisplayText,
+                    Source = item.Content.Source,
+                    StyleKey = item.Content.StyleKey
+                }).ToArray());
+
+            if (!removeObjectReplacementCharacters)
+                return snapshot;
+
+            var adjusted = snapshot.Text ?? string.Empty;
+            var snapshotItems = snapshot.Items.ToArray();
+            foreach (var item in snapshotItems.OrderByDescending(item => item.Offset))
+            {
+                if (item.Offset >= 0 && item.Offset < adjusted.Length && adjusted[item.Offset] == ObjectReplacementCharacter)
+                    adjusted = adjusted.Remove(item.Offset, 1);
+            }
+
+            var removedBefore = 0;
+            foreach (var item in snapshotItems.OrderBy(item => item.Offset))
+            {
+                item.Offset -= removedBefore;
+                removedBefore++;
+            }
+
+            return new RichTextInputSnapshot(adjusted, snapshotItems);
+        }
+
         public void SetValue(RichTextInputValue value)
         {
             if (value == null)
@@ -1218,6 +1387,23 @@ namespace AvaloniaEdit.RichTextInput
                     builder.Remove(relativeOffset, 1);
                     builder.Insert(relativeOffset, replacement);
                 }
+            }
+
+            return builder.ToString();
+        }
+
+        public string GetSelectedPlainText(Func<RichTextContentItem, string> contentTextFactory = null)
+        {
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            if (_textArea.Selection.IsEmpty)
+                return string.Empty;
+
+            var builder = new System.Text.StringBuilder();
+            foreach (var segment in GetOrderedSelectionSegments())
+            {
+                builder.Append(GetPlainText(
+                    new SimpleSegment(segment.StartOffset, segment.EndOffset - segment.StartOffset),
+                    contentTextFactory));
             }
 
             return builder.ToString();
@@ -1482,6 +1668,13 @@ namespace AvaloniaEdit.RichTextInput
                 .ToArray();
         }
 
+        private IReadOnlyList<SelectionSegment> GetOrderedSelectionSegments()
+        {
+            return _textArea.Selection.Segments
+                .OrderBy(segment => segment.StartOffset)
+                .ToArray();
+        }
+
         private RichTextContentItem AddItem(int offset, RichTextContent content)
         {
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
@@ -1530,32 +1723,75 @@ namespace AvaloniaEdit.RichTextInput
                 item.Offset >= segment.StartOffset && item.Offset + item.Length <= segment.EndOffset);
         }
 
-        internal bool RaiseContentPointerPressed(RichTextContentItem item, RoutedEventArgs routedEventArgs)
+        internal RichTextContentPointerEventArgs RaiseContentPointerPressed(RichTextContentItem item, RoutedEventArgs routedEventArgs)
         {
-            var args = new RichTextContentPointerEventArgs(item, routedEventArgs);
+            var args = new RichTextContentPointerEventArgs(this, item, routedEventArgs, RichTextContentPointerEventKind.PointerPressed);
             ContentPointerPressed?.Invoke(this, args);
-            return args.Handled;
+            return args;
         }
 
-        internal bool RaiseContentPointerReleased(RichTextContentItem item, RoutedEventArgs routedEventArgs)
+        internal RichTextContentPointerEventArgs RaiseContentPointerReleased(RichTextContentItem item, RoutedEventArgs routedEventArgs)
         {
-            var args = new RichTextContentPointerEventArgs(item, routedEventArgs);
+            var args = new RichTextContentPointerEventArgs(this, item, routedEventArgs, RichTextContentPointerEventKind.PointerReleased);
             ContentPointerReleased?.Invoke(this, args);
-            return args.Handled;
+            return args;
         }
 
-        internal bool RaiseContentDoubleTapped(RichTextContentItem item, RoutedEventArgs routedEventArgs)
+        internal RichTextContentPointerEventArgs RaiseContentDoubleTapped(RichTextContentItem item, RoutedEventArgs routedEventArgs)
         {
-            var args = new RichTextContentPointerEventArgs(item, routedEventArgs);
+            var args = new RichTextContentPointerEventArgs(this, item, routedEventArgs, RichTextContentPointerEventKind.DoubleTapped);
             ContentDoubleTapped?.Invoke(this, args);
-            return args.Handled;
+            return args;
         }
 
-        internal bool RaiseContentContextRequested(RichTextContentItem item, RoutedEventArgs routedEventArgs)
+        internal RichTextContentPointerEventArgs RaiseContentContextRequested(RichTextContentItem item, RoutedEventArgs routedEventArgs)
         {
-            var args = new RichTextContentPointerEventArgs(item, routedEventArgs);
+            var args = new RichTextContentPointerEventArgs(this, item, routedEventArgs, RichTextContentPointerEventKind.ContextRequested);
             ContentContextRequested?.Invoke(this, args);
-            return args.Handled;
+            return args;
+        }
+
+        internal bool ShouldHandleContentPointerEvent(RichTextContentPointerEventArgs args)
+        {
+            return ContentPointerHandledSelector?.Invoke(args) ?? HandleContentPointerEvents;
+        }
+
+        internal void ApplyContentPointerSelection(RichTextContentPointerEventArgs args)
+        {
+            if (args == null || args.EventKind != RichTextContentPointerEventKind.PointerPressed)
+                return;
+
+            var behavior = ContentPointerSelectionBehaviorSelector?.Invoke(args)
+                ?? (SelectContentOnPointerPressed
+                    ? ContentPointerSelectionBehavior
+                    : RichTextContentPointerSelectionBehavior.None);
+
+            switch (behavior)
+            {
+                case RichTextContentPointerSelectionBehavior.SelectContent:
+                    SelectContent(args.Item);
+                    break;
+                case RichTextContentPointerSelectionBehavior.PreserveSelection:
+                    if (!IsContentSelected(args.Item))
+                        SelectContent(args.Item);
+                    break;
+                case RichTextContentPointerSelectionBehavior.ExtendSelection:
+                    ExtendSelectionToContent(args.Item);
+                    break;
+            }
+        }
+
+        private void ExtendSelectionToContent(RichTextContentItem item)
+        {
+            if (item == null || !_items.Contains(item) || _textArea.Document == null)
+                return;
+
+            var anchorOffset = _textArea.Selection.IsEmpty
+                ? _textArea.Caret.Offset
+                : _textArea.Selection.SurroundingSegment.Offset;
+            _textArea.Focus();
+            _textArea.Selection = Selection.Create(_textArea, anchorOffset, item.EndOffset);
+            _textArea.Caret.Offset = item.EndOffset;
         }
 
         private sealed class RichTextContentUndoOperation : IUndoableOperation
@@ -1727,36 +1963,36 @@ namespace AvaloniaEdit.RichTextInput
         protected override void OnPointerPressed(PointerPressedEventArgs e)
         {
             base.OnPointerPressed(e);
-            if (_manager.RaiseContentPointerPressed(_item, e))
+            var args = _manager.RaiseContentPointerPressed(_item, e);
+            if (args.Handled)
             {
                 e.Handled = true;
                 return;
             }
 
-            if (_manager.SelectContentOnPointerPressed)
-                _manager.SelectContent(_item);
+            _manager.ApplyContentPointerSelection(args);
 
-            e.Handled = true;
+            e.Handled = _manager.ShouldHandleContentPointerEvent(args);
         }
 
         protected override void OnPointerReleased(PointerReleasedEventArgs e)
         {
             base.OnPointerReleased(e);
-            if (_manager.RaiseContentPointerReleased(_item, e))
-                e.Handled = true;
+            var args = _manager.RaiseContentPointerReleased(_item, e);
+            e.Handled = args.Handled || _manager.ShouldHandleContentPointerEvent(args);
         }
 
         protected override void OnDoubleTapped(TappedEventArgs e)
         {
             base.OnDoubleTapped(e);
-            if (_manager.RaiseContentDoubleTapped(_item, e))
-                e.Handled = true;
+            var args = _manager.RaiseContentDoubleTapped(_item, e);
+            e.Handled = args.Handled || _manager.ShouldHandleContentPointerEvent(args);
         }
 
         private void OnContextRequested(object sender, ContextRequestedEventArgs e)
         {
-            if (_manager.RaiseContentContextRequested(_item, e))
-                e.Handled = true;
+            var args = _manager.RaiseContentContextRequested(_item, e);
+            e.Handled = args.Handled || _manager.ShouldHandleContentPointerEvent(args);
         }
 
         private void Manager_ContentSelectionChanged(object sender, RichTextContentChangedEventArgs e)

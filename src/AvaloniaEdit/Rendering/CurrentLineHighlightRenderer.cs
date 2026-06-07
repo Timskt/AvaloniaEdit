@@ -82,19 +82,40 @@ namespace AvaloniaEdit.Rendering
             if (!_textView.Options.HighlightCurrentLine)
                 return;
 
-            var builder = new BackgroundGeometryBuilder();
-
             var visualLine = _textView.GetVisualLine(_line);
             if (visualLine == null) return;
 
             var linePosY = visualLine.VisualTop - _textView.ScrollOffset.Y;
+            var textWidth = GetTextWidth(visualLine);
+            var lineRectangle = new Rect(0, linePosY, textView.Bounds.Width, visualLine.Height);
+            var style = _textView.GetCurrentLineHighlightStyle(visualLine, lineRectangle, textWidth);
+            if (style == null || (style.BackgroundBrush == null && style.BorderPen == null))
+                return;
 
-            builder.AddRectangle(textView, new Rect(0, linePosY, textView.Bounds.Width, visualLine.Height));
+            var width = style.ExtendToViewportWidth
+                ? textView.Bounds.Width
+                : Math.Max(style.MinWidth, textWidth);
+            var rect = new Rect(0, linePosY, width, visualLine.Height).Deflate(style.Margin);
+            if (rect.Width <= 0 || rect.Height <= 0)
+                return;
 
-            var geometry = builder.CreateGeometry();
-            if (geometry != null) {
-                drawingContext.DrawGeometry(BackgroundBrush, BorderPen, geometry);
-            }
+            if (style.CornerRadius.TopLeft > 0)
+                drawingContext.DrawRectangle(
+                    style.BackgroundBrush,
+                    style.BorderPen,
+                    rect,
+                    style.CornerRadius.TopLeft,
+                    style.CornerRadius.TopLeft);
+            else
+                drawingContext.DrawRectangle(style.BackgroundBrush, style.BorderPen, rect);
+        }
+
+        private static double GetTextWidth(VisualLine visualLine)
+        {
+            var width = 0d;
+            foreach (var textLine in visualLine.TextLines)
+                width = Math.Max(width, textLine.Width);
+            return width;
         }
     }
 }
