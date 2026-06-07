@@ -110,8 +110,11 @@ IME 确认、删除文字、插入图片时，同一行的图片/卡片位置可
 
 ```csharp
 editor.TextArea.TextView.AnimateInlineObjectPlacement = true;
-editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(220);
+editor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(260);
 editor.TextArea.TextView.InlineObjectPlacementAnimationMinimumDistance = 2;
+editor.TextArea.TextView.InlineObjectPlacementAnimationEasing =
+    InlineObjectPlacementAnimationEasing.SmootherStep;
+editor.TextArea.TextView.InlineObjectPlacementAnimationRetargetDurationMultiplier = 1.2;
 ```
 
 ## 中文 IME
@@ -164,15 +167,87 @@ richInput.HighlightSelectedContent = false;
 richInput.ContentPointerPressed += (_, e) =>
 {
     // 默认行为是单击选中。设置 Handled=true 可接管。
+    var point = e.TryGetPosition(editor.TextArea.TextView, out var p) ? p : default;
+    var selectedPlainText = e.GetSelectedPlainText(item => item.Content.DisplayText);
 };
 
 richInput.ContentDoubleTapped += (_, e) => OpenPreview(e.Item);
-richInput.ContentContextRequested += (_, e) => ShowMenu(e.Item);
+richInput.ContentContextRequested += (_, e) =>
+{
+    var selectedItems = e.GetSelectedItems();
+    var selectedValue = e.GetSelectionValue();
+    ShowMenu(e.Item, selectedItems, selectedValue);
+    e.Handled = true;
+};
+
 richInput.ContentRemoving += (_, e) =>
 {
     if (IsUploading(e.Item))
         e.Cancel = true;
 };
+```
+
+普通文本选择默认继续走 AvaloniaEdit 原生鼠标选择；富内容 wrapper 默认负责图片、文件、card 等对象本身的点击、右键和双击。这个默认行为不是固定的，业务可以按对象、鼠标按钮、修饰键和事件类型细分：
+
+```csharp
+richInput.ContentPointerSelectionBehaviorSelector = e =>
+{
+    if (e.EventKind != RichTextContentPointerEventKind.PointerPressed)
+        return RichTextContentPointerSelectionBehavior.None;
+
+    if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        return RichTextContentPointerSelectionBehavior.ExtendSelection;
+
+    if (e.Item.Content.Kind == RichTextContentKind.Image)
+        return RichTextContentPointerSelectionBehavior.SelectContent;
+
+    // 例如 card 点击时保持已有文本选区，让业务自己处理。
+    return RichTextContentPointerSelectionBehavior.None;
+};
+
+// 返回 false 时允许事件继续冒泡给底层 TextArea，适合做拖拽框选或完全接管 native selection。
+richInput.ContentPointerHandledSelector = e =>
+    e.Item.Content.Kind == RichTextContentKind.Image;
+
+// 只是不想自动选中，但仍要保留点击/右键事件：
+richInput.SelectContentOnPointerPressed = false;
+
+// 完全不包 wrapper，不要富内容点击、选择、右键、双击事件：
+richInput.EnableContentPointerInteractions = false;
+```
+
+右键点中富内容时可以通过 `ContentContextRequested` 拿到当前对象，也可以通过 `GetSelectedItems()`、`GetSelectionValue()`、`GetSelectedPlainText()` 拿到用户已经选中的局部数据，用于删除、转发、复制、邮件或业务菜单。
+
+manager 上也提供同名能力，适合工具栏按钮或外部菜单使用：
+
+```csharp
+var value = richInput.GetSelectionValue();
+var snapshot = richInput.GetSelectionSnapshot();
+var text = richInput.GetSelectedPlainText(item => $"[{item.Content.DisplayText}]");
+var items = richInput.GetSelectedItems();
+```
+
+## 当前行样式
+
+基础样式可以直接设置：
+
+```csharp
+editor.TextArea.TextView.CurrentLineBackground = Brushes.Transparent;
+editor.TextArea.TextView.CurrentLineBorder = new Pen(Brushes.DodgerBlue, 1);
+```
+
+需要自定义激活行矩形的圆角、边距、宽度或按行号动态变化时，使用 selector：
+
+```csharp
+editor.TextArea.TextView.CurrentLineHighlightStyleSelector = context =>
+    new CurrentLineHighlightStyle
+    {
+        BackgroundBrush = new SolidColorBrush(Color.FromArgb(28, 59, 130, 246)),
+        BorderPen = new Pen(new SolidColorBrush(Color.FromArgb(72, 37, 99, 235)), 1),
+        CornerRadius = new CornerRadius(4),
+        Margin = new Thickness(1),
+        ExtendToViewportWidth = true
+    };
 ```
 
 ## @ 人和指令弹窗

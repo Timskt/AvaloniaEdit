@@ -95,7 +95,10 @@ namespace AvaloniaEdit.Demo
 
             _textEditor.TextArea.TextView.ElementGenerators.Add(_generator);
             _textEditor.TextArea.TextView.AnimateInlineObjectPlacement = true;
-            _textEditor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(220);
+            _textEditor.TextArea.TextView.InlineObjectPlacementAnimationDuration = TimeSpan.FromMilliseconds(260);
+            _textEditor.TextArea.TextView.InlineObjectPlacementAnimationEasing = InlineObjectPlacementAnimationEasing.SmootherStep;
+            _textEditor.TextArea.TextView.InlineObjectPlacementAnimationRetargetDurationMultiplier = 1.2;
+            _textEditor.TextArea.TextView.CurrentLineHighlightStyleSelector = CreateCurrentLineHighlightStyle;
             _textEditor.TextArea.TextView.ElementGenerators.Add(LinkElementGenerator.CreateIpAddressGenerator());
             _textEditor.TextArea.TextView.LinkTextStyleSelector = CreateLinkTextStyle;
             _textEditor.TextArea.TextView.LinkTextClicked += TextView_LinkTextClicked;
@@ -104,6 +107,9 @@ namespace AvaloniaEdit.Demo
             _richTextInputManager.MaxImageWidth = 190;
             _richTextInputManager.MaxImageHeight = 130;
             _richTextInputManager.ElementFactory = CreateRichTextInputElement;
+            _richTextInputManager.ContentPointerPressed += RichTextInputManager_ContentPointerPressed;
+            _richTextInputManager.ContentDoubleTapped += RichTextInputManager_ContentDoubleTapped;
+            _richTextInputManager.ContentContextRequested += RichTextInputManager_ContentContextRequested;
             _richTextInputManager.PasteHandler = RichTextInputManager_PasteHandler;
 
             _lineContentAlignmentCombo = this.FindControl<ComboBox>("lineContentAlignmentCombo");
@@ -358,6 +364,18 @@ namespace AvaloniaEdit.Demo
             };
         }
 
+        private CurrentLineHighlightStyle CreateCurrentLineHighlightStyle(CurrentLineHighlightContext context)
+        {
+            return new CurrentLineHighlightStyle
+            {
+                BackgroundBrush = new SolidColorBrush(Color.FromArgb(28, 59, 130, 246)),
+                BorderPen = new Pen(new SolidColorBrush(Color.FromArgb(72, 37, 99, 235)), 1),
+                CornerRadius = new CornerRadius(4),
+                Margin = new Thickness(1, 1),
+                ExtendToViewportWidth = true
+            };
+        }
+
         private void TextView_LinkTextClicked(object sender, LinkTextClickedEventArgs e)
         {
             if (e.LinkKind == "ip")
@@ -368,6 +386,22 @@ namespace AvaloniaEdit.Demo
             }
 
             _statusTextBlock.Text = $"Link clicked: {e.Text}";
+        }
+
+        private void RichTextInputManager_ContentPointerPressed(object sender, RichTextContentPointerEventArgs e)
+        {
+            _statusTextBlock.Text = $"Selected {e.Item.Content.Kind}: {e.Item.Content.DisplayText}; selection={e.GetSelectedPlainText(item => item.Content.DisplayText)}";
+        }
+
+        private void RichTextInputManager_ContentDoubleTapped(object sender, RichTextContentPointerEventArgs e)
+        {
+            _statusTextBlock.Text = $"Double tapped {e.Item.Content.Kind}: {e.Item.Content.DisplayText}";
+        }
+
+        private void RichTextInputManager_ContentContextRequested(object sender, RichTextContentPointerEventArgs e)
+        {
+            var selected = e.GetSelectedItems().Count;
+            _statusTextBlock.Text = $"Context requested {e.Item.Content.Kind}: {e.Item.Content.DisplayText}; selected items={selected}";
         }
 
         private void Caret_PositionChanged(object sender, EventArgs e)
