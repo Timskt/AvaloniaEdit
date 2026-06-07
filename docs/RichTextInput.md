@@ -106,6 +106,21 @@ richInput.InlineObjectAlignmentSelector = item =>
         : InlineObjectVerticalAlignment.Center;
 ```
 
+## 中文 IME
+
+默认使用 QQ 输入框式的 inline composition。输入法组合阶段的拼音、字母或候选前文本会作为临时 visual element 插入到光标位置，占住同一行布局，但不会写入 `TextDocument`、不会进入 undo stack，也不会参与复制/序列化。输入法确认后，提交文本仍走 AvaloniaEdit 原有 `TextInput` 路径。
+
+```csharp
+editor.TextArea.ImePreeditDisplayMode = ImePreeditDisplayMode.Inline; // 默认
+```
+
+如果业务确实需要旧的浮层绘制或完全隐藏 composition 显示，可以切换模式：
+
+```csharp
+editor.TextArea.ImePreeditDisplayMode = ImePreeditDisplayMode.Overlay;
+editor.TextArea.ImePreeditDisplayMode = ImePreeditDisplayMode.Hidden;
+```
+
 ## 选择样式
 
 默认选择态只描边，不铺大块蓝色背景。`SuppressTextSelectionBackgroundForRichContent` 默认是 `true`，选中图片、文件、card 等富内容时会过滤掉对象占位符的普通文本 selection 背景，只保留富内容 wrapper 自己的选中样式。
@@ -157,11 +172,52 @@ richInput.ContentRemoving += (_, e) =>
 Ava12 使用 `IDataTransfer/IAsyncDataTransfer`：
 
 ```csharp
+// 通用导入：粘贴和拖放都会走这里。
 richInput.CanImportAsyncDataTransfer = data => data.Contains(DataFormat.Text);
 richInput.AsyncDataTransferImporter = async data =>
 {
     var text = await data.TryGetTextAsync();
     return new[] { RichTextContent.FromCustom("custom-payload", text) };
+};
+
+// 只接管 Ctrl+V/粘贴：可以按数据类型决定插入文本、图片、文件或业务组件。
+richInput.PasteHandler = async context =>
+{
+    if (context.DataTransfer.Contains(DataFormat.Bitmap))
+        return; // UseDefault：不设置 Handled 时继续走默认图片粘贴。
+
+    var text = await context.DataTransfer.TryGetTextAsync();
+    if (text?.StartsWith("order:", StringComparison.OrdinalIgnoreCase) == true)
+    {
+        context.InsertContents(new[]
+        {
+            RichTextContent.FromCustom(text, new OrderPayload(text), "order-card")
+        });
+        return;
+    }
+
+    context.InsertText(text);
+};
+
+// 只接管拖放：适合按不同文件类型生成不同业务组件。
+richInput.DropHandler = async context =>
+{
+    var files = context.DataTransfer.TryGetFiles();
+    if (files == null)
+        return;
+
+    var contents = new List<RichTextContent>();
+    foreach (var file in files)
+    {
+        if (file.Name.EndsWith(".fig", StringComparison.OrdinalIgnoreCase))
+            contents.Add(RichTextContent.FromCustom(file.Name, file, "design-file"));
+        else if (file.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            contents.Add(RichTextContent.FromCustom(file.Name, file, "package-file"));
+        else
+            contents.Add(RichTextContent.FromFile(file));
+    }
+
+    context.InsertContents(contents);
 };
 ```
 
@@ -175,17 +231,37 @@ richInput.DataObjectImporter = data =>
     return Task.FromResult<IEnumerable<RichTextContent>>(
         new[] { RichTextContent.FromCustom("custom-payload", text) });
 };
+
+richInput.DropHandler = context =>
+{
+    var fileNames = context.DataObject.GetFileNames();
+    context.InsertContents(fileNames.Select(fileName =>
+        fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+            ? RichTextContent.FromCustom(Path.GetFileName(fileName), fileName, "package-file")
+            : RichTextContent.FromFileName(fileName)));
+    return Task.CompletedTask;
+};
 ```
 
 ## 复制粘贴快照
 
 复制时会同时写入普通文本和富内容快照。粘回支持 `RichTextInputManager` 的编辑器时会恢复富内容元数据；粘到普通输入框时仍是普通文本。
 
+同应用内从一个富输入框赋值给另一个富输入框或会话展示框，优先使用 live value。它会保留 Bitmap、自定义 `Value`、`Metadata` 和 `StyleKey`，目标控件会按自己的最大宽度和渲染工厂重新布局：
+
+```csharp
+var value = inputRich.GetValue();
+previewRich.SetValue(value);
+```
+
 手动序列化：
 
 ```csharp
 var snapshotJson = richInput.SerializeSnapshot(editor.TextArea.Selection.SurroundingSegment);
+otherRich.SetSerializedSnapshot(snapshotJson);
 ```
+
+`SerializeSnapshot` 适合存储或跨进程传递；如果要完整保留内存对象、Bitmap 或业务对象引用，用 `GetValue/SetValue`。
 
 ## 纯文本降级
 

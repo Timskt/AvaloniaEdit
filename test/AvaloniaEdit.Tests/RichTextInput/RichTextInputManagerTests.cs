@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
+using Avalonia.Input.TextInput;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
@@ -399,6 +401,45 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void InlineImePreeditOccupiesLayoutBeforeRichContentWithoutChangingDocument()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var item = manager.InsertContent(1, RichTextContent.FromCustom("card", 1));
+            textArea.Caret.Offset = item.Offset;
+
+            SetPreeditText(textArea, "zhong");
+            var visualLine = textArea.TextView.GetOrConstructVisualLine(textArea.Document.GetLineByOffset(item.Offset));
+            var elements = visualLine.Elements.ToArray();
+            var preeditIndex = Array.FindIndex(elements, element => element is PreeditTextElement);
+            var richContentIndex = Array.FindIndex(elements, element => element is InlineObjectElement);
+
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
+            Assert.GreaterOrEqual(preeditIndex, 0);
+            Assert.Greater(richContentIndex, preeditIndex);
+            Assert.AreEqual(0, elements[preeditIndex].DocumentLength);
+            Assert.AreEqual("zhong".Length, elements[preeditIndex].VisualLength);
+        }
+
+        [AvaloniaTest]
+        public void InlineImePreeditSupportsUnicodeCompositionText()
+        {
+            foreach (var preeditText in new[] { "zhong", "にほん", "ㅎㅏㄴ", "привет", "e\u0301" })
+            {
+                var textArea = CreateTextArea("ab");
+                textArea.Caret.Offset = 1;
+
+                SetPreeditText(textArea, preeditText);
+                var visualLine = textArea.TextView.GetOrConstructVisualLine(textArea.Document.GetLineByOffset(1));
+                var preedit = visualLine.Elements.OfType<PreeditTextElement>().Single();
+
+                Assert.AreEqual("ab", textArea.Document.Text);
+                Assert.AreEqual(0, preedit.DocumentLength);
+                Assert.AreEqual(preeditText.Length, preedit.VisualLength);
+            }
+        }
+
+        [AvaloniaTest]
         public async Task SerializedRichTextSnapshotPreservesStyleKey()
         {
             var sourceTextArea = CreateTextArea("");
@@ -415,12 +456,79 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual("order-card", target.Items[0].Content.StyleKey);
         }
 
+        [AvaloniaTest]
+        public void LiveValueCanBeAssignedToAnotherRichInput()
+        {
+            var payload = new object();
+            var sourceTextArea = CreateTextArea("send ");
+            var source = RichTextInputManager.Install(sourceTextArea);
+            source.InsertCustom("A001", payload, "order-card");
+            sourceTextArea.Document.Insert(sourceTextArea.Document.TextLength, " done");
+
+            var value = source.GetValue();
+            var targetTextArea = CreateTextArea("");
+            var target = RichTextInputManager.Install(targetTextArea);
+            target.SetValue(value);
+
+            Assert.AreEqual(sourceTextArea.Document.Text, targetTextArea.Document.Text);
+            Assert.AreEqual(1, target.Items.Count);
+            Assert.AreSame(payload, target.Items[0].Content.Value);
+            Assert.AreEqual("order-card", target.Items[0].Content.StyleKey);
+        }
+
+        [AvaloniaTest]
+        public async Task PasteHandlerCanChooseCustomContent()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.PasteHandler = context =>
+            {
+                context.InsertContents(new[] { RichTextContent.FromCustom("paste-card", 42, "paste-card") });
+                return Task.CompletedTask;
+            };
+            var dataTransfer = new DataTransfer();
+            dataTransfer.Add(DataTransferItem.CreateText("raw"));
+
+            var inserted = await manager.InsertPasteDataAsync((IAsyncDataTransfer)dataTransfer, 1, false);
+
+            Assert.IsTrue(inserted);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
+            Assert.AreEqual("paste-card", manager.Items[0].Content.StyleKey);
+        }
+
+        [AvaloniaTest]
+        public async Task DropHandlerCanChooseCustomContent()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.DropHandler = context =>
+            {
+                context.InsertContents(new[] { RichTextContent.FromCustom("drop-card", 99, "drop-card") });
+                return Task.CompletedTask;
+            };
+            var dataTransfer = new DataTransfer();
+            dataTransfer.Add(DataTransferItem.CreateText("raw"));
+
+            var inserted = await manager.InsertDropDataAsync((IDataTransfer)dataTransfer, 1, false);
+
+            Assert.IsTrue(inserted);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
+            Assert.AreEqual("drop-card", manager.Items[0].Content.StyleKey);
+        }
+
         private static TextArea CreateTextArea(string text)
         {
             return new TextArea
             {
                 Document = new TextDocument(text)
             };
+        }
+
+        private static void SetPreeditText(TextArea textArea, string text)
+        {
+            var field = typeof(TextArea).GetField("_imClient", BindingFlags.Instance | BindingFlags.NonPublic);
+            var client = (TextInputMethodClient)field.GetValue(textArea);
+            client.SetPreeditText(text);
         }
 
     }

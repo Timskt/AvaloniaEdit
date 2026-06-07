@@ -133,6 +133,138 @@ namespace AvaloniaEdit.RichTextInput
         public string StyleKey { get; set; }
     }
 
+    public sealed class RichTextInputValue
+    {
+        public RichTextInputValue()
+        {
+            Text = string.Empty;
+            Items = Array.Empty<RichTextInputValueItem>();
+        }
+
+        public RichTextInputValue(string text, IReadOnlyList<RichTextInputValueItem> items)
+        {
+            Text = text ?? string.Empty;
+            Items = items ?? Array.Empty<RichTextInputValueItem>();
+        }
+
+        public string Text { get; set; }
+
+        public IReadOnlyList<RichTextInputValueItem> Items { get; set; }
+    }
+
+    public sealed class RichTextInputValueItem
+    {
+        public int Offset { get; set; }
+
+        public RichTextContent Content { get; set; }
+    }
+
+    public sealed class RichTextPasteContext
+    {
+        internal RichTextPasteContext(IAsyncDataTransfer dataTransfer, int offset, bool replaceSelection)
+        {
+            DataTransfer = dataTransfer ?? throw new ArgumentNullException(nameof(dataTransfer));
+            Offset = offset;
+            ReplaceSelection = replaceSelection;
+            Contents = new List<RichTextContent>();
+        }
+
+        public IAsyncDataTransfer DataTransfer { get; }
+
+        public int Offset { get; }
+
+        public bool ReplaceSelection { get; }
+
+        public IList<RichTextContent> Contents { get; }
+
+        public string Text { get; private set; }
+
+        public bool Handled { get; private set; }
+
+        public void InsertContents(IEnumerable<RichTextContent> contents)
+        {
+            Contents.Clear();
+            if (contents != null)
+            {
+                foreach (var content in contents)
+                {
+                    if (content != null)
+                        Contents.Add(content);
+                }
+            }
+
+            Text = null;
+            Handled = true;
+        }
+
+        public void InsertText(string text)
+        {
+            Contents.Clear();
+            Text = text ?? string.Empty;
+            Handled = true;
+        }
+
+        public void UseDefault()
+        {
+            Contents.Clear();
+            Text = null;
+            Handled = false;
+        }
+    }
+
+    public sealed class RichTextDropContext
+    {
+        internal RichTextDropContext(IDataTransfer dataTransfer, int offset, bool replaceSelection)
+        {
+            DataTransfer = dataTransfer ?? throw new ArgumentNullException(nameof(dataTransfer));
+            Offset = offset;
+            ReplaceSelection = replaceSelection;
+            Contents = new List<RichTextContent>();
+        }
+
+        public IDataTransfer DataTransfer { get; }
+
+        public int Offset { get; }
+
+        public bool ReplaceSelection { get; }
+
+        public IList<RichTextContent> Contents { get; }
+
+        public string Text { get; private set; }
+
+        public bool Handled { get; private set; }
+
+        public void InsertContents(IEnumerable<RichTextContent> contents)
+        {
+            Contents.Clear();
+            if (contents != null)
+            {
+                foreach (var content in contents)
+                {
+                    if (content != null)
+                        Contents.Add(content);
+                }
+            }
+
+            Text = null;
+            Handled = true;
+        }
+
+        public void InsertText(string text)
+        {
+            Contents.Clear();
+            Text = text ?? string.Empty;
+            Handled = true;
+        }
+
+        public void UseDefault()
+        {
+            Contents.Clear();
+            Text = null;
+            Handled = false;
+        }
+    }
+
     public sealed class RichTextContentChangedEventArgs : EventArgs
     {
         public RichTextContentChangedEventArgs(RichTextContentItem item)
@@ -322,6 +454,10 @@ namespace AvaloniaEdit.RichTextInput
         public Func<IAsyncDataTransfer, bool> CanImportAsyncDataTransfer { get; set; }
 
         public Func<IAsyncDataTransfer, Task<IEnumerable<RichTextContent>>> AsyncDataTransferImporter { get; set; }
+
+        public Func<RichTextPasteContext, Task> PasteHandler { get; set; }
+
+        public Func<RichTextDropContext, Task> DropHandler { get; set; }
 
         public InlineObjectVerticalAlignment InlineObjectAlignment { get; set; } = InlineObjectVerticalAlignment.Bottom;
 
@@ -588,6 +724,16 @@ namespace AvaloniaEdit.RichTextInput
                 || dataTransfer.Contains(RichTextClipboardFormat);
         }
 
+        public bool CanPaste(IAsyncDataTransfer dataTransfer)
+        {
+            return dataTransfer != null && (PasteHandler != null || CanInsert(dataTransfer));
+        }
+
+        public bool CanDrop(IDataTransfer dataTransfer)
+        {
+            return dataTransfer != null && (DropHandler != null || CanInsert(dataTransfer));
+        }
+
         public Task<bool> InsertDataAsync(IDataTransfer dataTransfer, int offset, bool replaceSelection)
         {
             if (dataTransfer == null)
@@ -602,6 +748,48 @@ namespace AvaloniaEdit.RichTextInput
                 throw new ArgumentNullException(nameof(dataTransfer));
 
             return InsertDataCoreAsync(dataTransfer, offset, replaceSelection);
+        }
+
+        public async Task<bool> InsertPasteDataAsync(IAsyncDataTransfer dataTransfer, int offset, bool replaceSelection)
+        {
+            if (dataTransfer == null)
+                throw new ArgumentNullException(nameof(dataTransfer));
+
+            if (PasteHandler != null)
+            {
+                var context = new RichTextPasteContext(dataTransfer, offset, replaceSelection);
+                await PasteHandler(context);
+                if (context.Handled)
+                {
+                    if (context.Contents.Count > 0)
+                        return InsertContents(offset, replaceSelection, context.Contents);
+
+                    return InsertText(offset, replaceSelection, context.Text);
+                }
+            }
+
+            return await InsertDataCoreAsync(dataTransfer, offset, replaceSelection);
+        }
+
+        public async Task<bool> InsertDropDataAsync(IDataTransfer dataTransfer, int offset, bool replaceSelection)
+        {
+            if (dataTransfer == null)
+                throw new ArgumentNullException(nameof(dataTransfer));
+
+            if (DropHandler != null)
+            {
+                var context = new RichTextDropContext(dataTransfer, offset, replaceSelection);
+                await DropHandler(context);
+                if (context.Handled)
+                {
+                    if (context.Contents.Count > 0)
+                        return InsertContents(offset, replaceSelection, context.Contents);
+
+                    return InsertText(offset, replaceSelection, context.Text);
+                }
+            }
+
+            return await InsertDataCoreAsync(dataTransfer, offset, replaceSelection);
         }
 
         public void Dispose()
@@ -769,9 +957,110 @@ namespace AvaloniaEdit.RichTextInput
             return new RichTextInputSnapshot(adjusted, items);
         }
 
+        public RichTextInputSnapshot GetSnapshot(bool removeObjectReplacementCharacters = false)
+        {
+            return CreateSnapshot(null, removeObjectReplacementCharacters);
+        }
+
         public string SerializeSnapshot(ISegment segment = null)
         {
             return JsonSerializer.Serialize(CreateSnapshot(segment));
+        }
+
+        public string SerializeValue()
+        {
+            return SerializeSnapshot();
+        }
+
+        public RichTextInputValue GetValue(ISegment segment = null)
+        {
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            segment ??= new SimpleSegment(0, document.TextLength);
+            var text = document.GetText(segment);
+            var items = GetItemsInDocumentOrder()
+                .Where(item => item.Offset >= segment.Offset && item.Offset < segment.EndOffset)
+                .Select(item => new RichTextInputValueItem
+                {
+                    Offset = item.Offset - segment.Offset,
+                    Content = item.Content
+                })
+                .ToArray();
+
+            return new RichTextInputValue(text, items);
+        }
+
+        public void SetValue(RichTextInputValue value)
+        {
+            if (value == null)
+                throw new ArgumentNullException(nameof(value));
+
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            using (document.RunUpdate())
+            {
+                _items.Clear();
+                document.Text = value.Text ?? string.Empty;
+                foreach (var valueItem in value.Items.OrderBy(item => item.Offset))
+                {
+                    if (valueItem?.Content == null)
+                        continue;
+
+                    if (valueItem.Offset < 0 || valueItem.Offset >= document.TextLength)
+                        continue;
+
+                    if (document.GetCharAt(valueItem.Offset) == ObjectReplacementCharacter)
+                        AddItem(valueItem.Offset, valueItem.Content);
+                }
+
+                _textArea.Caret.Offset = document.TextLength;
+                _textArea.ClearSelection();
+            }
+
+            _textArea.TextView.Redraw();
+        }
+
+        public bool SetSnapshot(RichTextInputSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return false;
+
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            using (document.RunUpdate())
+            {
+                _items.Clear();
+                document.Text = snapshot.Text ?? string.Empty;
+                foreach (var snapshotItem in (snapshot.Items ?? Array.Empty<RichTextInputSnapshotItem>()).OrderBy(item => item.Offset))
+                {
+                    if (snapshotItem.Offset < 0
+                        || snapshotItem.Offset >= document.TextLength
+                        || document.GetCharAt(snapshotItem.Offset) != ObjectReplacementCharacter)
+                    {
+                        continue;
+                    }
+
+                    AddItem(snapshotItem.Offset, CreateContentFromSnapshotItem(snapshotItem));
+                }
+
+                _textArea.Caret.Offset = document.TextLength;
+                _textArea.ClearSelection();
+            }
+
+            _textArea.TextView.Redraw();
+            return true;
+        }
+
+        public bool SetSerializedSnapshot(string payload)
+        {
+            RichTextInputSnapshot snapshot;
+            try
+            {
+                snapshot = JsonSerializer.Deserialize<RichTextInputSnapshot>(payload);
+            }
+            catch
+            {
+                return false;
+            }
+
+            return SetSnapshot(snapshot);
         }
 
         public string GetPlainText(ISegment segment = null, Func<RichTextContentItem, string> contentTextFactory = null)
@@ -848,7 +1137,7 @@ namespace AvaloniaEdit.RichTextInput
                         && itemOffset < document.TextLength
                         && document.GetCharAt(itemOffset) == ObjectReplacementCharacter)
                     {
-                        var content = new RichTextContent(snapshotItem.Kind, snapshotItem.DisplayText, null, snapshotItem.Source, snapshotItem.StyleKey);
+                        var content = CreateContentFromSnapshotItem(snapshotItem);
                         var item = AddItem(itemOffset, content);
                         if (document.UndoStack.AcceptChanges)
                             document.UndoStack.Push(new RichTextContentUndoOperation(this, content, itemOffset, true, item));
@@ -861,6 +1150,11 @@ namespace AvaloniaEdit.RichTextInput
 
             _textArea.Caret.BringCaretToView();
             return true;
+        }
+
+        private static RichTextContent CreateContentFromSnapshotItem(RichTextInputSnapshotItem snapshotItem)
+        {
+            return new RichTextContent(snapshotItem.Kind, snapshotItem.DisplayText, null, snapshotItem.Source, snapshotItem.StyleKey);
         }
 
         private bool InsertContents(int offset, bool replaceSelection, IList<RichTextContent> contents)
@@ -886,6 +1180,29 @@ namespace AvaloniaEdit.RichTextInput
 
             _textArea.Caret.Offset = offset;
             _textArea.ClearSelection();
+            _textArea.Caret.BringCaretToView();
+            return true;
+        }
+
+        private bool InsertText(int offset, bool replaceSelection, string text)
+        {
+            if (text == null)
+                return false;
+
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            using (document.RunUpdate())
+            {
+                if (replaceSelection && !_textArea.Selection.IsEmpty)
+                {
+                    _textArea.RemoveSelectedText();
+                    offset = _textArea.Caret.Offset;
+                }
+
+                document.Insert(offset, text);
+                _textArea.Caret.Offset = offset + text.Length;
+                _textArea.ClearSelection();
+            }
+
             _textArea.Caret.BringCaretToView();
             return true;
         }

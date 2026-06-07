@@ -535,8 +535,19 @@ namespace AvaloniaEdit.Editing
                         return;
                     }
 
+                    var richTextInputManager = textArea.GetService(typeof(IRichTextInputDataHandler)) as RichTextInputManager;
+                    if (richTextInputManager != null && richTextInputManager.CanPaste(data))
+                    {
+                        if (await richTextInputManager.InsertPasteDataAsync(data, textArea.Caret.Offset, true))
+                        {
+                            textArea.Caret.BringCaretToView();
+                            args.Handled = true;
+                            return;
+                        }
+                    }
+
                     var richTextInputHandler = textArea.GetService(typeof(IRichTextInputDataHandler)) as IRichTextInputDataHandler;
-                    if (richTextInputHandler?.CanInsert(data) == true)
+                    if (richTextInputHandler != richTextInputManager && richTextInputHandler?.CanInsert(data) == true)
                     {
                         if (await richTextInputHandler.InsertDataAsync(data, textArea.Caret.Offset, true))
                         {
