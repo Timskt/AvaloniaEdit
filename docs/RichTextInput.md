@@ -41,6 +41,53 @@ richInput.ElementFactory = item =>
 
 `ElementFactory` 只负责返回业务控件。默认外层 wrapper 负责选中、事件、高亮和删除，所以自定义控件不用自己处理编辑器 selection。
 
+如果业务里有很多种组件样式，不建议在一个 `ElementFactory` 里写很长的 `if/else`。推荐给内容指定 `StyleKey`，然后按 key 注册工厂：
+
+```csharp
+richInput.RegisterElementFactory("order-card", context =>
+    new OrderCardView
+    {
+        DataContext = context.Content.Value,
+        MaxWidth = context.AvailableWidth
+    });
+
+richInput.RegisterElementFactory("mention-user", context =>
+    new MentionUserChip((User)context.Content.Value));
+
+richInput.InsertCustom(
+    displayText: "订单 A001",
+    value: order,
+    styleKey: "order-card",
+    metadata: new Dictionary<string, object>
+    {
+        ["status"] = "paid",
+        ["compact"] = true
+    });
+```
+
+需要全局接管时，用上下文工厂：
+
+```csharp
+richInput.ElementFactoryWithContext = context =>
+{
+    if (context.Metadata.TryGetValue("compact", out var compact) && compact is true)
+        return new CompactCard(context.Content.Value);
+
+    return null; // 返回 null 时继续走 StyleKey 注册工厂、ElementFactory、默认渲染。
+};
+```
+
+`RichTextElementFactoryContext` 提供：
+
+- `Manager`、`TextArea`
+- `Item`、`Content`
+- `StyleKey`、`Metadata`
+- `AvailableWidth`
+- `MaxImageWidth`、`MaxImageHeight`
+- `IsSelected`
+
+`RichTextContentItem.Tag` 可以放运行时状态，例如上传进度、临时错误信息或 UI 缓存对象。
+
 ## 对齐配置
 
 默认是底部对齐，适合一行里同时存在文字、图片和卡片的聊天输入场景。
