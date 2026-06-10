@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -101,6 +102,48 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
             Assert.AreEqual(1, manager.Items.Count);
             Assert.AreEqual(RichTextContentKind.Image, manager.Items[0].Content.Kind);
+        }
+
+        [AvaloniaTest]
+        public async Task InsertDataAsyncAddsMultipleFileNameContentsIncludingFolder()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "AvaloniaEdit.RichInput." + Guid.NewGuid().ToString("N"));
+            var folder = Path.Combine(root, "docs");
+            var executable = Path.Combine(root, "tool.exe");
+            var document = Path.Combine(root, "readme.txt");
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(executable, "binary");
+            File.WriteAllText(document, "hello");
+            try
+            {
+                var textArea = CreateTextArea("");
+                var manager = RichTextInputManager.Install(textArea);
+                manager.FileContentImporter = context =>
+                    context.IsExecutable
+                        ? Task.FromResult(RichTextContent.FromCustom(context.Name, context.FileName, "executable-file"))
+                        : context.CreateDefaultContentAsync();
+                var dataObject = new DataObject();
+                dataObject.Set(DataFormats.FileNames, new[] { folder, executable, document });
+
+                var inserted = await manager.InsertDataAsync(dataObject, 0, false);
+
+                Assert.IsTrue(inserted);
+                Assert.AreEqual(
+                    RichTextInputManager.ObjectReplacementString + RichTextInputManager.ObjectReplacementString + RichTextInputManager.ObjectReplacementString,
+                    textArea.Document.Text);
+                Assert.AreEqual(3, manager.Items.Count);
+                Assert.AreEqual(RichTextContentKind.Folder, manager.Items[0].Content.Kind);
+                Assert.AreEqual(RichTextContentKind.Custom, manager.Items[1].Content.Kind);
+                Assert.AreEqual(RichTextContentKind.File, manager.Items[2].Content.Kind);
+                Assert.AreEqual("docs", manager.Items[0].Content.DisplayText);
+                Assert.AreEqual("executable-file", manager.Items[1].Content.StyleKey);
+                Assert.AreEqual("readme.txt", manager.Items[2].Content.DisplayText);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, true);
+            }
         }
 
         [AvaloniaTest]

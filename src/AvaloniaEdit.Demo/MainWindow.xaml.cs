@@ -258,7 +258,9 @@ namespace AvaloniaEdit.Demo
         private Control CreateRichTextInputElement(RichTextContentItem item)
         {
             var maxInlineWidth = GetRichContentMaxWidth();
-            if (item.Content.Kind == RichTextContentKind.File || item.Content.Kind == RichTextContentKind.Custom)
+            if (item.Content.Kind == RichTextContentKind.File
+                || item.Content.Kind == RichTextContentKind.Folder
+                || item.Content.Kind == RichTextContentKind.Custom)
             {
                 return new Border
                 {

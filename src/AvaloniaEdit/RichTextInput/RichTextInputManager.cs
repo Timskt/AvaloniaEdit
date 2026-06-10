@@ -25,6 +25,7 @@ namespace AvaloniaEdit.RichTextInput
         Emoji,
         Image,
         File,
+        Folder,
         Custom
     }
 
@@ -81,12 +82,28 @@ namespace AvaloniaEdit.RichTextInput
             return new RichTextContent(RichTextContentKind.File, file.Name, file, file.Path?.ToString());
         }
 
+        public static RichTextContent FromFolder(IStorageItem folder)
+        {
+            if (folder == null)
+                throw new ArgumentNullException(nameof(folder));
+
+            return new RichTextContent(RichTextContentKind.Folder, folder.Name, folder, folder.Path?.ToString());
+        }
+
         public static RichTextContent FromFileName(string fileName)
         {
             if (fileName == null)
                 throw new ArgumentNullException(nameof(fileName));
 
             return new RichTextContent(RichTextContentKind.File, Path.GetFileName(fileName), fileName, fileName);
+        }
+
+        public static RichTextContent FromFolderName(string folderName)
+        {
+            if (folderName == null)
+                throw new ArgumentNullException(nameof(folderName));
+
+            return new RichTextContent(RichTextContentKind.Folder, Path.GetFileName(folderName), folderName, folderName);
         }
 
         public static RichTextContent FromCustom(string displayText, object value, string styleKey = null, IReadOnlyDictionary<string, object> metadata = null)
@@ -277,6 +294,56 @@ namespace AvaloniaEdit.RichTextInput
             Contents.Clear();
             Text = null;
             Handled = false;
+        }
+    }
+
+    public sealed class RichTextFileImportContext
+    {
+        private readonly Func<Task<RichTextContent>> _defaultFactory;
+
+        internal RichTextFileImportContext(
+            RichTextInputManager manager,
+            IStorageItem storageItem,
+            string fileName,
+            bool isFolder,
+            Func<Task<RichTextContent>> defaultFactory)
+        {
+            Manager = manager ?? throw new ArgumentNullException(nameof(manager));
+            StorageItem = storageItem;
+            FileName = fileName;
+            Name = storageItem?.Name ?? Path.GetFileName(fileName) ?? string.Empty;
+            Source = storageItem?.Path?.ToString() ?? fileName;
+            IsFolder = isFolder;
+            IsImage = !isFolder && RichTextInputManager.IsImageFileName(Name);
+            IsExecutable = !isFolder && RichTextInputManager.IsExecutableFileName(Name);
+            IsArchive = !isFolder && RichTextInputManager.IsArchiveFileName(Name);
+            IsDocument = !isFolder && RichTextInputManager.IsDocumentFileName(Name);
+            _defaultFactory = defaultFactory ?? throw new ArgumentNullException(nameof(defaultFactory));
+        }
+
+        public RichTextInputManager Manager { get; }
+
+        public IStorageItem StorageItem { get; }
+
+        public string FileName { get; }
+
+        public string Name { get; }
+
+        public string Source { get; }
+
+        public bool IsFolder { get; }
+
+        public bool IsImage { get; }
+
+        public bool IsExecutable { get; }
+
+        public bool IsArchive { get; }
+
+        public bool IsDocument { get; }
+
+        public Task<RichTextContent> CreateDefaultContentAsync()
+        {
+            return _defaultFactory();
         }
     }
 
@@ -517,6 +584,21 @@ namespace AvaloniaEdit.RichTextInput
             ".bmp", ".gif", ".jpg", ".jpeg", ".png", ".webp"
         };
 
+        private static readonly HashSet<string> ExecutableExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".app", ".bat", ".cmd", ".com", ".dll", ".dmg", ".exe", ".msi", ".ps1", ".sh"
+        };
+
+        private static readonly HashSet<string> ArchiveExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".7z", ".gz", ".rar", ".tar", ".tgz", ".zip"
+        };
+
+        private static readonly HashSet<string> DocumentExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".csv", ".doc", ".docx", ".md", ".pdf", ".ppt", ".pptx", ".txt", ".xls", ".xlsx"
+        };
+
         private static readonly string[] BitmapDataFormats =
         {
             "Bitmap",
@@ -578,6 +660,8 @@ namespace AvaloniaEdit.RichTextInput
         public Func<RichTextPasteContext, Task> PasteHandler { get; set; }
 
         public Func<RichTextDropContext, Task> DropHandler { get; set; }
+
+        public Func<RichTextFileImportContext, Task<RichTextContent>> FileContentImporter { get; set; }
 
         public InlineObjectVerticalAlignment InlineObjectAlignment { get; set; } = InlineObjectVerticalAlignment.Bottom;
 
@@ -689,6 +773,16 @@ namespace AvaloniaEdit.RichTextInput
         public RichTextContentItem InsertFileName(string fileName)
         {
             return InsertContent(RichTextContent.FromFileName(fileName));
+        }
+
+        public RichTextContentItem InsertFolder(IStorageItem folder)
+        {
+            return InsertContent(RichTextContent.FromFolder(folder));
+        }
+
+        public RichTextContentItem InsertFolderName(string folderName)
+        {
+            return InsertContent(RichTextContent.FromFolderName(folderName));
         }
 
         public RichTextContentItem InsertCustom(string displayText, object value)
@@ -1108,7 +1202,7 @@ namespace AvaloniaEdit.RichTextInput
                 {
                     foreach (var fileName in fileNames)
                     {
-                        var content = CreateContentForFileName(fileName);
+                        var content = await CreateContentForFileNameAsync(fileName);
                         if (content != null)
                             contents.Add(content);
                     }
@@ -1566,7 +1660,28 @@ namespace AvaloniaEdit.RichTextInput
             if (file == null)
                 return null;
 
-            if (ConvertImageFilesToImages && file is IStorageFile storageFile && IsImageFile(file.Name))
+            var context = new RichTextFileImportContext(
+                this,
+                file,
+                null,
+                file is IStorageFolder,
+                () => CreateDefaultContentForFileAsync(file));
+            if (FileContentImporter != null)
+            {
+                var content = await FileContentImporter(context);
+                if (content != null)
+                    return content;
+            }
+
+            return await context.CreateDefaultContentAsync();
+        }
+
+        private async Task<RichTextContent> CreateDefaultContentForFileAsync(IStorageItem file)
+        {
+            if (file is IStorageFolder)
+                return RichTextContent.FromFolder(file);
+
+            if (ConvertImageFilesToImages && file is IStorageFile storageFile && IsImageFileName(file.Name))
             {
                 var bitmap = await TryLoadBitmapAsync(storageFile);
                 if (bitmap != null)
@@ -1576,12 +1691,33 @@ namespace AvaloniaEdit.RichTextInput
             return RichTextContent.FromFile(file);
         }
 
-        private RichTextContent CreateContentForFileName(string fileName)
+        private async Task<RichTextContent> CreateContentForFileNameAsync(string fileName)
         {
             if (string.IsNullOrEmpty(fileName))
                 return null;
 
-            if (ConvertImageFilesToImages && IsImageFile(fileName) && File.Exists(fileName))
+            var context = new RichTextFileImportContext(
+                this,
+                null,
+                fileName,
+                Directory.Exists(fileName),
+                () => Task.FromResult(CreateDefaultContentForFileName(fileName)));
+            if (FileContentImporter != null)
+            {
+                var content = await FileContentImporter(context);
+                if (content != null)
+                    return content;
+            }
+
+            return await context.CreateDefaultContentAsync();
+        }
+
+        private RichTextContent CreateDefaultContentForFileName(string fileName)
+        {
+            if (Directory.Exists(fileName))
+                return RichTextContent.FromFolderName(fileName);
+
+            if (ConvertImageFilesToImages && IsImageFileName(fileName) && File.Exists(fileName))
             {
                 try
                 {
@@ -1595,10 +1731,28 @@ namespace AvaloniaEdit.RichTextInput
             return RichTextContent.FromFileName(fileName);
         }
 
-        private static bool IsImageFile(string fileName)
+        public static bool IsImageFileName(string fileName)
         {
             var extension = Path.GetExtension(fileName);
             return !string.IsNullOrEmpty(extension) && ImageExtensions.Contains(extension);
+        }
+
+        public static bool IsExecutableFileName(string fileName)
+        {
+            var extension = Path.GetExtension(fileName);
+            return !string.IsNullOrEmpty(extension) && ExecutableExtensions.Contains(extension);
+        }
+
+        public static bool IsArchiveFileName(string fileName)
+        {
+            var extension = Path.GetExtension(fileName);
+            return !string.IsNullOrEmpty(extension) && ArchiveExtensions.Contains(extension);
+        }
+
+        public static bool IsDocumentFileName(string fileName)
+        {
+            var extension = Path.GetExtension(fileName);
+            return !string.IsNullOrEmpty(extension) && DocumentExtensions.Contains(extension);
         }
 
         private static async Task<Bitmap> TryLoadBitmapAsync(IStorageFile file)
@@ -2044,7 +2198,11 @@ namespace AvaloniaEdit.RichTextInput
 
         private static Control CreateFileLikeElement(RichTextContent content, double maxInlineWidth)
         {
-            var icon = content.Kind == RichTextContentKind.File ? "FILE" : content.Kind.ToString().ToUpperInvariant();
+            var icon = content.Kind == RichTextContentKind.File
+                ? "FILE"
+                : content.Kind == RichTextContentKind.Folder
+                    ? "DIR"
+                    : content.Kind.ToString().ToUpperInvariant();
             var title = string.IsNullOrWhiteSpace(content.DisplayText) ? content.Kind.ToString() : content.DisplayText;
             return new Border
             {
