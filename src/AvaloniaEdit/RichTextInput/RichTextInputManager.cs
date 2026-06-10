@@ -1956,8 +1956,29 @@ namespace AvaloniaEdit.RichTextInput
 
         private void Document_Changed(object sender, DocumentChangeEventArgs e)
         {
-            if (RemoveInvalidItems())
+            if (RemoveInvalidItems() || ShouldRebuildRichContentVisuals(e))
                 _textArea.TextView.Redraw();
+        }
+
+        private bool ShouldRebuildRichContentVisuals(DocumentChangeEventArgs e)
+        {
+            return _items.Count > 0
+                && (ContainsLineBreak(e.InsertedText) || ContainsLineBreak(e.RemovedText));
+        }
+
+        private static bool ContainsLineBreak(ITextSource text)
+        {
+            if (text == null || text.TextLength == 0)
+                return false;
+
+            for (var i = 0; i < text.TextLength; i++)
+            {
+                var c = text.GetCharAt(i);
+                if (c == '\r' || c == '\n')
+                    return true;
+            }
+
+            return false;
         }
 
         private bool RemoveInvalidItems()
