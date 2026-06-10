@@ -503,6 +503,69 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void PlainEnterInLineWithRichContentKeepsAllRichContentItems()
+        {
+            var textArea = CreateTextArea("abcd");
+            var manager = RichTextInputManager.Install(textArea);
+            var card = manager.InsertContent(1, RichTextContent.FromCustom("card", 7, "card"));
+            var image = manager.InsertContent(4, RichTextContent.FromCustom("image", 8, "image"));
+            textArea.Caret.Offset = 3;
+
+            textArea.PerformTextInput("\n");
+
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b\nc" + RichTextInputManager.ObjectReplacementString + "d", textArea.Document.Text);
+            Assert.AreEqual(2, manager.Items.Count);
+            Assert.AreSame(card.Content, manager.Items[0].Content);
+            Assert.AreSame(image.Content, manager.Items[1].Content);
+            Assert.AreEqual(1, manager.Items[0].Offset);
+            Assert.AreEqual(5, manager.Items[1].Offset);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[0].Offset));
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[1].Offset));
+        }
+
+        [AvaloniaTest]
+        public void PlainEnterImmediatelyBeforeRichContentKeepsAllRichContentItems()
+        {
+            var textArea = CreateTextArea("abcd");
+            var manager = RichTextInputManager.Install(textArea);
+            var card = manager.InsertContent(1, RichTextContent.FromCustom("card", 7, "card"));
+            var image = manager.InsertContent(4, RichTextContent.FromCustom("image", 8, "image"));
+            textArea.Caret.Offset = card.Offset;
+
+            textArea.PerformTextInput("\n");
+
+            Assert.AreEqual("a\n" + RichTextInputManager.ObjectReplacementString + "bc" + RichTextInputManager.ObjectReplacementString + "d", textArea.Document.Text);
+            Assert.AreEqual(2, manager.Items.Count);
+            Assert.AreSame(card.Content, manager.Items[0].Content);
+            Assert.AreSame(image.Content, manager.Items[1].Content);
+            Assert.AreEqual(2, manager.Items[0].Offset);
+            Assert.AreEqual(5, manager.Items[1].Offset);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[0].Offset));
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[1].Offset));
+        }
+
+        [AvaloniaTest]
+        public void PlainEnterImmediatelyAfterRichContentKeepsAllRichContentItems()
+        {
+            var textArea = CreateTextArea("abcd");
+            var manager = RichTextInputManager.Install(textArea);
+            var card = manager.InsertContent(1, RichTextContent.FromCustom("card", 7, "card"));
+            var image = manager.InsertContent(4, RichTextContent.FromCustom("image", 8, "image"));
+            textArea.Caret.Offset = card.EndOffset;
+
+            textArea.PerformTextInput("\n");
+
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "\nbc" + RichTextInputManager.ObjectReplacementString + "d", textArea.Document.Text);
+            Assert.AreEqual(2, manager.Items.Count);
+            Assert.AreSame(card.Content, manager.Items[0].Content);
+            Assert.AreSame(image.Content, manager.Items[1].Content);
+            Assert.AreEqual(1, manager.Items[0].Offset);
+            Assert.AreEqual(5, manager.Items[1].Offset);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[0].Offset));
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[1].Offset));
+        }
+
+        [AvaloniaTest]
         public void CaretCanMoveAcrossAdjacentRichContentWithKeyboard()
         {
             var textArea = CreateTextArea("");
