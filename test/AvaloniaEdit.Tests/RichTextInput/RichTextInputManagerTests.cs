@@ -454,6 +454,55 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void EnterOnSelectedRichContentKeepsFollowingRichContentItems()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var card = manager.InsertContent(1, RichTextContent.FromCustom("card", 7, "card"));
+            var image = manager.InsertContent(textArea.Document.TextLength, RichTextContent.FromCustom("image", 8, "image"));
+            manager.SelectContent(card);
+
+            var handled = manager.HandleSelectedContentEnterKey();
+
+            Assert.IsTrue(handled);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "\nb" + RichTextInputManager.ObjectReplacementString, textArea.Document.Text);
+            Assert.AreEqual(2, manager.Items.Count);
+            Assert.AreSame(card.Content, manager.Items[0].Content);
+            Assert.AreSame(image.Content, manager.Items[1].Content);
+            Assert.AreEqual(1, manager.Items[0].Offset);
+            Assert.AreEqual(4, manager.Items[1].Offset);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[0].Offset));
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[1].Offset));
+            Assert.AreEqual(3, textArea.Caret.Offset);
+            Assert.IsTrue(textArea.Selection.IsEmpty);
+        }
+
+        [AvaloniaTest]
+        public void EnterBeforeSelectedRichContentKeepsSelectedAndFollowingRichContentItems()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.SelectedContentEnterBehavior = RichTextSelectedContentEnterBehavior.InsertNewLineBeforeContent;
+            var card = manager.InsertContent(1, RichTextContent.FromCustom("card", 7, "card"));
+            var file = manager.InsertContent(textArea.Document.TextLength, RichTextContent.FromFileName("report.pdf"));
+            manager.SelectContent(card);
+
+            var handled = manager.HandleSelectedContentEnterKey();
+
+            Assert.IsTrue(handled);
+            Assert.AreEqual("a\n" + RichTextInputManager.ObjectReplacementString + "b" + RichTextInputManager.ObjectReplacementString, textArea.Document.Text);
+            Assert.AreEqual(2, manager.Items.Count);
+            Assert.AreSame(card.Content, manager.Items[0].Content);
+            Assert.AreSame(file.Content, manager.Items[1].Content);
+            Assert.AreEqual(2, manager.Items[0].Offset);
+            Assert.AreEqual(4, manager.Items[1].Offset);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[0].Offset));
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[1].Offset));
+            Assert.AreEqual(2, textArea.Caret.Offset);
+            Assert.IsTrue(textArea.Selection.IsEmpty);
+        }
+
+        [AvaloniaTest]
         public void CaretCanMoveAcrossAdjacentRichContentWithKeyboard()
         {
             var textArea = CreateTextArea("");
