@@ -1846,7 +1846,7 @@ namespace AvaloniaEdit.RichTextInput
             if ((e.KeyModifiers & ~KeyModifiers.Shift) != KeyModifiers.None)
                 return;
 
-            e.Handled = HandleSelectedContentEnterKey();
+            e.Handled = HandleSelectedContentEnterKey() || HandleCaretAdjacentContentEnterKey();
         }
 
         internal bool HandleSelectedContentEnterKey()
@@ -1881,6 +1881,21 @@ namespace AvaloniaEdit.RichTextInput
                 default:
                     return false;
             }
+        }
+
+        internal bool HandleCaretAdjacentContentEnterKey()
+        {
+            if (!_textArea.Selection.IsEmpty || _textArea.Document == null)
+                return false;
+
+            var offset = Math.Max(0, Math.Min(_textArea.Caret.Offset, _textArea.Document.TextLength));
+            if (TryGetItem(offset, out _) || TryGetItem(offset - ObjectReplacementString.Length, out _))
+            {
+                InsertNewLineAt(offset);
+                return true;
+            }
+
+            return false;
         }
 
         private void InsertNewLineAt(int offset)

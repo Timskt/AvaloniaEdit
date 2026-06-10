@@ -474,6 +474,41 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void EnterImmediatelyBeforeTrailingRichContentKeepsContent()
+        {
+            var textArea = CreateTextArea("if (true) { ab");
+            textArea.IndentationStrategy = new CSharpIndentationStrategy(textArea.Options);
+            var manager = RichTextInputManager.Install(textArea);
+            var card = manager.InsertContent(textArea.Document.TextLength, RichTextContent.FromCustom("card", 7, "card"));
+            textArea.Caret.Offset = card.Offset;
+
+            var handled = manager.HandleCaretAdjacentContentEnterKey();
+
+            Assert.IsTrue(handled);
+            Assert.AreEqual("if (true) { ab\n" + RichTextInputManager.ObjectReplacementString, textArea.Document.Text);
+            Assert.AreEqual(1, manager.Items.Count);
+            Assert.AreSame(card.Content, manager.Items[0].Content);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[0].Offset));
+        }
+
+        [AvaloniaTest]
+        public void EnterImmediatelyBeforeRichContentDoesNotIndentNewRichContentLine()
+        {
+            var textArea = CreateTextArea("    ab");
+            textArea.IndentationStrategy = new CSharpIndentationStrategy(textArea.Options);
+            var manager = RichTextInputManager.Install(textArea);
+            var image = manager.InsertContent(textArea.Document.TextLength, RichTextContent.FromCustom("image", 8, "image"));
+            textArea.Caret.Offset = image.Offset;
+
+            var handled = manager.HandleCaretAdjacentContentEnterKey();
+
+            Assert.IsTrue(handled);
+            var richLine = textArea.Document.GetLineByNumber(2);
+            Assert.AreEqual(richLine.Offset, manager.Items[0].Offset);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(richLine.Offset));
+        }
+
+        [AvaloniaTest]
         public void CaretCanMoveAcrossAdjacentRichContentWithKeyboard()
         {
             var textArea = CreateTextArea("");
