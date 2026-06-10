@@ -218,6 +218,19 @@ richInput.EnableContentPointerInteractions = false;
 
 右键点中富内容时可以通过 `ContentContextRequested` 拿到当前对象，也可以通过 `GetSelectedItems()`、`GetSelectionValue()`、`GetSelectedPlainText()` 拿到用户已经选中的局部数据，用于删除、转发、复制、邮件或业务菜单。
 
+当富内容被单独选中时，默认按 Enter 会在该内容后插入换行，并保留图片、文件或 card 本身，避免把对象占位符替换成裸 `\uFFFC` 字符。这个行为也可以配置：
+
+```csharp
+richInput.SelectedContentEnterBehavior =
+    RichTextSelectedContentEnterBehavior.InsertNewLineAfterContent; // 默认
+
+richInput.SelectedContentEnterBehavior =
+    RichTextSelectedContentEnterBehavior.MoveCaretAfterContent;
+
+richInput.SelectedContentEnterBehavior =
+    RichTextSelectedContentEnterBehavior.KeepDefault; // 完全交还给 TextArea 默认编辑逻辑
+```
+
 manager 上也提供同名能力，适合工具栏按钮或外部菜单使用：
 
 ```csharp
@@ -472,6 +485,8 @@ richInput.DropHandler = context =>
     return Task.CompletedTask;
 };
 ```
+
+Ava11 会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
 
 ## 复制粘贴快照
 

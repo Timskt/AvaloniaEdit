@@ -362,6 +362,14 @@ namespace AvaloniaEdit.RichTextInput
         ExtendSelection
     }
 
+    public enum RichTextSelectedContentEnterBehavior
+    {
+        KeepDefault,
+        MoveCaretAfterContent,
+        InsertNewLineBeforeContent,
+        InsertNewLineAfterContent
+    }
+
     public sealed class RichTextContentPointerEventArgs : EventArgs
     {
         public RichTextContentPointerEventArgs(RichTextContentItem item, RoutedEventArgs routedEventArgs)
@@ -509,6 +517,17 @@ namespace AvaloniaEdit.RichTextInput
             ".bmp", ".gif", ".jpg", ".jpeg", ".png", ".webp"
         };
 
+        private static readonly string[] BitmapDataFormats =
+        {
+            "Bitmap",
+            "image/png",
+            "image/bmp",
+            "PNG",
+            "DeviceIndependentBitmap",
+            "CF_DIB",
+            "CF_DIBV5"
+        };
+
         private readonly TextArea _textArea;
         private readonly RichTextInlineObjectGenerator _generator;
         private readonly List<RichTextContentItem> _items = new List<RichTextContentItem>();
@@ -530,6 +549,7 @@ namespace AvaloniaEdit.RichTextInput
             _textArea.TextView.SizeChanged += TextView_SizeChanged;
             _textArea.DocumentChanged += TextArea_DocumentChanged;
             _textArea.SelectionChanged += TextArea_SelectionChanged;
+            _textArea.AddHandler(InputElement.KeyDownEvent, TextArea_KeyDown, RoutingStrategies.Tunnel);
             AttachToDocument(_textArea.Document);
         }
 
@@ -600,6 +620,9 @@ namespace AvaloniaEdit.RichTextInput
         public bool HandleContentPointerEvents { get; set; } = true;
 
         public Func<RichTextContentPointerEventArgs, bool> ContentPointerHandledSelector { get; set; }
+
+        public RichTextSelectedContentEnterBehavior SelectedContentEnterBehavior { get; set; } =
+            RichTextSelectedContentEnterBehavior.InsertNewLineAfterContent;
 
         public event EventHandler<RichTextContentChangedEventArgs> ContentInserted;
 
@@ -927,6 +950,7 @@ namespace AvaloniaEdit.RichTextInput
                 return false;
 
             return CanImportDataObject?.Invoke(dataObject) == true
+                || ContainsBitmapData(dataObject)
                 || dataObject.Contains(DataFormats.Files)
                 || dataObject.Contains(DataFormats.FileNames)
                 || dataObject.Contains(RichTextClipboardFormat);
@@ -1002,6 +1026,7 @@ namespace AvaloniaEdit.RichTextInput
             _textArea.TextView.SizeChanged -= TextView_SizeChanged;
             _textArea.DocumentChanged -= TextArea_DocumentChanged;
             _textArea.SelectionChanged -= TextArea_SelectionChanged;
+            _textArea.RemoveHandler(InputElement.KeyDownEvent, TextArea_KeyDown);
             _textArea.TextView.ElementGenerators.Remove(_generator);
             if (_textArea.GetService(typeof(IRichTextInputDataHandler)) == this)
                 _textArea.TextView.Services.RemoveService<IRichTextInputDataHandler>();
@@ -1087,6 +1112,13 @@ namespace AvaloniaEdit.RichTextInput
                         if (content != null)
                             contents.Add(content);
                     }
+                }
+
+                if (contents.Count == 0)
+                {
+                    var bitmap = TryGetBitmap(dataObject);
+                    if (bitmap != null)
+                        contents.Add(RichTextContent.FromImage(bitmap));
                 }
             }
 
@@ -1584,6 +1616,61 @@ namespace AvaloniaEdit.RichTextInput
             }
         }
 
+        private static bool ContainsBitmapData(IDataObject dataObject)
+        {
+            if (dataObject == null)
+                return false;
+
+            var formats = dataObject.GetDataFormats() ?? Array.Empty<string>();
+            return formats.Any(IsBitmapDataFormat);
+        }
+
+        private static Bitmap TryGetBitmap(IDataObject dataObject)
+        {
+            if (dataObject == null)
+                return null;
+
+            var formats = (dataObject.GetDataFormats() ?? Array.Empty<string>())
+                .Concat(BitmapDataFormats)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(IsBitmapDataFormat)
+                .ToArray();
+
+            foreach (var format in formats)
+            {
+                try
+                {
+                    var value = dataObject.Get(format);
+                    switch (value)
+                    {
+                        case Bitmap bitmap:
+                            return bitmap;
+                        case Stream stream:
+                            if (stream.CanSeek)
+                                stream.Position = 0;
+                            return new Bitmap(stream);
+                        case byte[] bytes:
+                            using (var memory = new MemoryStream(bytes))
+                                return new Bitmap(memory);
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsBitmapDataFormat(string format)
+        {
+            if (string.IsNullOrWhiteSpace(format))
+                return false;
+
+            return BitmapDataFormats.Any(known =>
+                string.Equals(known, format, StringComparison.OrdinalIgnoreCase));
+        }
+
         private void TextArea_DocumentChanged(object sender, DocumentChangedEventArgs e)
         {
             DetachFromDocument(e.OldDocument);
@@ -1602,6 +1689,68 @@ namespace AvaloniaEdit.RichTextInput
         {
             if (_items.Count > 0)
                 ContentSelectionChanged?.Invoke(this, new RichTextContentChangedEventArgs(null));
+        }
+
+        private void TextArea_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Handled || e.Key != Key.Enter)
+                return;
+
+            if ((e.KeyModifiers & ~KeyModifiers.Shift) != KeyModifiers.None)
+                return;
+
+            e.Handled = HandleSelectedContentEnterKey();
+        }
+
+        internal bool HandleSelectedContentEnterKey()
+        {
+            if (SelectedContentEnterBehavior == RichTextSelectedContentEnterBehavior.KeepDefault
+                || !TryGetSingleSelectedContent(out var item))
+            {
+                return false;
+            }
+
+            switch (SelectedContentEnterBehavior)
+            {
+                case RichTextSelectedContentEnterBehavior.MoveCaretAfterContent:
+                    _textArea.ClearSelection();
+                    _textArea.Caret.Offset = item.EndOffset;
+                    FinalizeCaretAfterInsertion();
+                    return true;
+                case RichTextSelectedContentEnterBehavior.InsertNewLineBeforeContent:
+                    _textArea.ClearSelection();
+                    _textArea.Caret.Offset = item.Offset;
+                    _textArea.PerformTextInput("\n");
+                    FinalizeCaretAfterInsertion();
+                    return true;
+                case RichTextSelectedContentEnterBehavior.InsertNewLineAfterContent:
+                    _textArea.ClearSelection();
+                    _textArea.Caret.Offset = item.EndOffset;
+                    _textArea.PerformTextInput("\n");
+                    FinalizeCaretAfterInsertion();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryGetSingleSelectedContent(out RichTextContentItem selectedItem)
+        {
+            selectedItem = null;
+            if (_textArea.Selection.IsEmpty)
+                return false;
+
+            var segment = _textArea.Selection.SurroundingSegment;
+            var items = GetSelectedItems();
+            if (items.Count != 1)
+                return false;
+
+            var item = items[0];
+            if (segment.Offset != item.Offset || segment.EndOffset != item.EndOffset)
+                return false;
+
+            selectedItem = item;
+            return true;
         }
 
         private double GetConstrainedInlineWidth()

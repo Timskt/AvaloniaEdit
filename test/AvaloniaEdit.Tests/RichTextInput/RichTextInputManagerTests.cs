@@ -8,6 +8,7 @@ using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 using Avalonia.Input.TextInput;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
@@ -84,6 +85,22 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual("hi " + RichTextInputManager.ObjectReplacementString + " ok", targetTextArea.Document.Text);
             Assert.AreEqual(1, target.Items.Count);
             Assert.AreEqual("report.pdf", target.Items[0].Content.DisplayText);
+        }
+
+        [AvaloniaTest]
+        public async Task InsertDataAsyncAddsBitmapContentFromDataObject()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var dataObject = new DataObject();
+            dataObject.Set("Bitmap", new WriteableBitmap(new PixelSize(1, 1), new Vector(96, 96), null, null));
+
+            var inserted = await manager.InsertDataAsync(dataObject, 1, false);
+
+            Assert.IsTrue(inserted);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
+            Assert.AreEqual(1, manager.Items.Count);
+            Assert.AreEqual(RichTextContentKind.Image, manager.Items[0].Content.Kind);
         }
 
         [AvaloniaTest]
@@ -260,6 +277,25 @@ namespace AvaloniaEdit.Tests.RichTextInput
 
             Assert.AreEqual(0, textArea.Selection.SurroundingSegment.Offset);
             Assert.AreEqual(1, textArea.Selection.SurroundingSegment.EndOffset);
+        }
+
+        [AvaloniaTest]
+        public void EnterOnSelectedRichContentKeepsContentAndInsertsNewLineAfterIt()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var item = manager.InsertContent(1, RichTextContent.FromCustom("card", 7, "card"));
+            manager.SelectContent(item);
+
+            var handled = manager.HandleSelectedContentEnterKey();
+
+            Assert.IsTrue(handled);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "\nb", textArea.Document.Text);
+            Assert.AreEqual(1, manager.Items.Count);
+            Assert.AreSame(item.Content, manager.Items[0].Content);
+            Assert.AreEqual(1, manager.Items[0].Offset);
+            Assert.AreEqual(3, textArea.Caret.Offset);
+            Assert.IsTrue(textArea.Selection.IsEmpty);
         }
 
         [AvaloniaTest]
