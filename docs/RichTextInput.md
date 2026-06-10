@@ -474,6 +474,34 @@ richInput.DropHandler = context =>
 
 Ava11 会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
 
+多选复制文件时会按剪贴板顺序逐个插入：
+
+- 图片文件：默认尝试转成 `RichTextContentKind.Image`。
+- 文件夹：插入 `RichTextContentKind.Folder`。
+- 其他文件：插入 `RichTextContentKind.File`。
+- `.exe`、压缩包、Office/PDF/文本等不会被执行或读取正文，只作为文件项进入输入框。
+
+如果要按每个文件做更细处理，使用 `FileContentImporter`。它会在默认转换前逐项调用，返回 `null` 或调用 `CreateDefaultContentAsync()` 就继续走默认逻辑：
+
+```csharp
+richInput.FileContentImporter = async context =>
+{
+    if (context.IsFolder)
+        return RichTextContent.FromCustom(context.Name, context.StorageItem ?? context.FileName, "folder-card");
+
+    if (context.IsExecutable)
+        return RichTextContent.FromCustom(context.Name, context.StorageItem ?? context.FileName, "danger-file");
+
+    if (context.IsArchive)
+        return RichTextContent.FromCustom(context.Name, context.StorageItem ?? context.FileName, "archive-file");
+
+    if (context.IsDocument)
+        return RichTextContent.FromCustom(context.Name, context.StorageItem ?? context.FileName, "document-file");
+
+    return await context.CreateDefaultContentAsync();
+};
+```
+
 ## 复制粘贴快照
 
 复制时会同时写入普通文本和富内容快照。粘回支持 `RichTextInputManager` 的编辑器时会恢复富内容元数据；粘到普通输入框时仍是普通文本。

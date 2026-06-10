@@ -52,6 +52,20 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void InsertFolderNameAddsFolderContent()
+        {
+            var textArea = CreateTextArea("");
+            var manager = RichTextInputManager.Install(textArea);
+
+            manager.InsertFolderName("/tmp/project");
+
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementString, textArea.Document.Text);
+            Assert.AreEqual(1, manager.Items.Count);
+            Assert.AreEqual(RichTextContentKind.Folder, manager.Items[0].Content.Kind);
+            Assert.AreEqual("project", manager.Items[0].Content.DisplayText);
+        }
+
+        [AvaloniaTest]
         public void UndoRedoRestoresInsertedRichContentMetadata()
         {
             var textArea = CreateTextArea("ab");
