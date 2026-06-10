@@ -1864,20 +1864,32 @@ namespace AvaloniaEdit.RichTextInput
                     FinalizeCaretAfterInsertion();
                     return true;
                 case RichTextSelectedContentEnterBehavior.InsertNewLineBeforeContent:
+                {
+                    var offset = item.Offset;
                     _textArea.ClearSelection();
-                    _textArea.Caret.Offset = item.Offset;
-                    _textArea.PerformTextInput("\n");
-                    FinalizeCaretAfterInsertion();
+                    InsertNewLineAt(offset);
                     return true;
+                }
                 case RichTextSelectedContentEnterBehavior.InsertNewLineAfterContent:
+                {
+                    var offset = item.EndOffset;
                     _textArea.ClearSelection();
-                    _textArea.Caret.Offset = item.EndOffset;
-                    _textArea.PerformTextInput("\n");
-                    FinalizeCaretAfterInsertion();
+                    InsertNewLineAt(offset);
                     return true;
+                }
                 default:
                     return false;
             }
+        }
+
+        private void InsertNewLineAt(int offset)
+        {
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            var line = document.GetLineByOffset(Math.Min(offset, document.TextLength));
+            var newLine = TextUtilities.GetNewLineFromDocument(document, line.LineNumber);
+            document.Insert(offset, newLine);
+            _textArea.Caret.Offset = offset + newLine.Length;
+            FinalizeCaretAfterInsertion();
         }
 
         private bool TryGetSingleSelectedContent(out RichTextContentItem selectedItem)
