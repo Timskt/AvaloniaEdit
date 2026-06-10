@@ -347,6 +347,14 @@ namespace AvaloniaEdit.RichTextInput
         ExtendSelection
     }
 
+    public enum RichTextSelectedContentEnterBehavior
+    {
+        KeepDefault,
+        MoveCaretAfterContent,
+        InsertNewLineBeforeContent,
+        InsertNewLineAfterContent
+    }
+
     public sealed class RichTextContentPointerEventArgs : EventArgs
     {
         public RichTextContentPointerEventArgs(RichTextContentItem item, RoutedEventArgs routedEventArgs)
@@ -550,6 +558,7 @@ namespace AvaloniaEdit.RichTextInput
             _textArea.TextView.SizeChanged += TextView_SizeChanged;
             _textArea.DocumentChanged += TextArea_DocumentChanged;
             _textArea.SelectionChanged += TextArea_SelectionChanged;
+            _textArea.AddHandler(InputElement.KeyDownEvent, TextArea_KeyDown, RoutingStrategies.Tunnel);
             AttachToDocument(_textArea.Document);
         }
 
@@ -624,6 +633,9 @@ namespace AvaloniaEdit.RichTextInput
         public bool HandleContentPointerEvents { get; set; } = true;
 
         public Func<RichTextContentPointerEventArgs, bool> ContentPointerHandledSelector { get; set; }
+
+        public RichTextSelectedContentEnterBehavior SelectedContentEnterBehavior { get; set; } =
+            RichTextSelectedContentEnterBehavior.InsertNewLineAfterContent;
 
         public event EventHandler<RichTextContentChangedEventArgs> ContentInserted;
 
@@ -1039,6 +1051,7 @@ namespace AvaloniaEdit.RichTextInput
             _textArea.TextView.SizeChanged -= TextView_SizeChanged;
             _textArea.DocumentChanged -= TextArea_DocumentChanged;
             _textArea.SelectionChanged -= TextArea_SelectionChanged;
+            _textArea.RemoveHandler(InputElement.KeyDownEvent, TextArea_KeyDown);
             _textArea.TextView.ElementGenerators.Remove(_generator);
             if (_textArea.GetService(typeof(IRichTextInputDataHandler)) == this)
                 _textArea.TextView.Services.RemoveService<IRichTextInputDataHandler>();
@@ -1587,6 +1600,68 @@ namespace AvaloniaEdit.RichTextInput
         {
             if (_items.Count > 0)
                 ContentSelectionChanged?.Invoke(this, new RichTextContentChangedEventArgs(null));
+        }
+
+        private void TextArea_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Handled || e.Key != Key.Enter)
+                return;
+
+            if ((e.KeyModifiers & ~KeyModifiers.Shift) != KeyModifiers.None)
+                return;
+
+            e.Handled = HandleSelectedContentEnterKey();
+        }
+
+        internal bool HandleSelectedContentEnterKey()
+        {
+            if (SelectedContentEnterBehavior == RichTextSelectedContentEnterBehavior.KeepDefault
+                || !TryGetSingleSelectedContent(out var item))
+            {
+                return false;
+            }
+
+            switch (SelectedContentEnterBehavior)
+            {
+                case RichTextSelectedContentEnterBehavior.MoveCaretAfterContent:
+                    _textArea.ClearSelection();
+                    _textArea.Caret.Offset = item.EndOffset;
+                    FinalizeCaretAfterInsertion();
+                    return true;
+                case RichTextSelectedContentEnterBehavior.InsertNewLineBeforeContent:
+                    _textArea.ClearSelection();
+                    _textArea.Caret.Offset = item.Offset;
+                    _textArea.PerformTextInput("\n");
+                    FinalizeCaretAfterInsertion();
+                    return true;
+                case RichTextSelectedContentEnterBehavior.InsertNewLineAfterContent:
+                    _textArea.ClearSelection();
+                    _textArea.Caret.Offset = item.EndOffset;
+                    _textArea.PerformTextInput("\n");
+                    FinalizeCaretAfterInsertion();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryGetSingleSelectedContent(out RichTextContentItem selectedItem)
+        {
+            selectedItem = null;
+            if (_textArea.Selection.IsEmpty)
+                return false;
+
+            var segment = _textArea.Selection.SurroundingSegment;
+            var items = GetSelectedItems();
+            if (items.Count != 1)
+                return false;
+
+            var item = items[0];
+            if (segment.Offset != item.Offset || segment.EndOffset != item.EndOffset)
+                return false;
+
+            selectedItem = item;
+            return true;
         }
 
         private double GetConstrainedInlineWidth()

@@ -421,6 +421,25 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void EnterOnSelectedRichContentKeepsContentAndInsertsNewLineAfterIt()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var item = manager.InsertContent(1, RichTextContent.FromCustom("card", 7, "card"));
+            manager.SelectContent(item);
+
+            var handled = manager.HandleSelectedContentEnterKey();
+
+            Assert.IsTrue(handled);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "\nb", textArea.Document.Text);
+            Assert.AreEqual(1, manager.Items.Count);
+            Assert.AreSame(item.Content, manager.Items[0].Content);
+            Assert.AreEqual(1, manager.Items[0].Offset);
+            Assert.AreEqual(3, textArea.Caret.Offset);
+            Assert.IsTrue(textArea.Selection.IsEmpty);
+        }
+
+        [AvaloniaTest]
         public void CaretCanMoveAcrossAdjacentRichContentWithKeyboard()
         {
             var textArea = CreateTextArea("");
