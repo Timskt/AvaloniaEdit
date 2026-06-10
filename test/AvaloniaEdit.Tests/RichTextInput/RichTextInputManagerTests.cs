@@ -621,6 +621,36 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void PlainNewLineEnterBehaviorDoesNotIndentTextLine()
+        {
+            var textArea = CreateTextArea("    hello");
+            textArea.IndentationStrategy = new CSharpIndentationStrategy(textArea.Options);
+            var manager = RichTextInputManager.Install(textArea);
+            manager.EnterKeyBehavior = RichTextEnterKeyBehavior.PlainNewLine;
+            textArea.Caret.Offset = textArea.Document.TextLength;
+
+            var handled = manager.HandleEnterKey();
+
+            Assert.IsTrue(handled);
+            Assert.AreEqual("    hello\n", textArea.Document.Text);
+            var line = textArea.Document.GetLineByNumber(2);
+            Assert.AreEqual(line.Offset, textArea.Caret.Offset);
+        }
+
+        [AvaloniaTest]
+        public void DefaultEnterBehaviorKeepsTextAreaIndentationForPlainText()
+        {
+            var textArea = CreateTextArea("    hello");
+            textArea.IndentationStrategy = new CSharpIndentationStrategy(textArea.Options);
+            var manager = RichTextInputManager.Install(textArea);
+            textArea.Caret.Offset = textArea.Document.TextLength;
+
+            var handled = manager.HandleEnterKey();
+
+            Assert.IsFalse(handled);
+        }
+
+        [AvaloniaTest]
         public void CaretCanMoveAcrossAdjacentRichContentWithKeyboard()
         {
             var textArea = CreateTextArea("");

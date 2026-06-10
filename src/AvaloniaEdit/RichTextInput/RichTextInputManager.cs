@@ -422,6 +422,13 @@ namespace AvaloniaEdit.RichTextInput
         InsertNewLineAfterContent
     }
 
+    public enum RichTextEnterKeyBehavior
+    {
+        KeepDefault,
+        PlainNewLine,
+        PlainNewLineWhenAdjacentToContent
+    }
+
     public sealed class RichTextContentPointerEventArgs : EventArgs
     {
         public RichTextContentPointerEventArgs(RichTextContentItem item, RoutedEventArgs routedEventArgs)
@@ -721,6 +728,9 @@ namespace AvaloniaEdit.RichTextInput
 
         public RichTextSelectedContentEnterBehavior SelectedContentEnterBehavior { get; set; } =
             RichTextSelectedContentEnterBehavior.InsertNewLineAfterContent;
+
+        public RichTextEnterKeyBehavior EnterKeyBehavior { get; set; } =
+            RichTextEnterKeyBehavior.PlainNewLineWhenAdjacentToContent;
 
         public event EventHandler<RichTextContentChangedEventArgs> ContentInserted;
 
@@ -1740,7 +1750,23 @@ namespace AvaloniaEdit.RichTextInput
             if ((e.KeyModifiers & ~KeyModifiers.Shift) != KeyModifiers.None)
                 return;
 
-            e.Handled = HandleSelectedContentEnterKey() || HandleCaretAdjacentContentEnterKey();
+            e.Handled = HandleSelectedContentEnterKey() || HandleEnterKey();
+        }
+
+        internal bool HandleEnterKey()
+        {
+            switch (EnterKeyBehavior)
+            {
+                case RichTextEnterKeyBehavior.KeepDefault:
+                    return false;
+                case RichTextEnterKeyBehavior.PlainNewLine:
+                    InsertPlainNewLine();
+                    return true;
+                case RichTextEnterKeyBehavior.PlainNewLineWhenAdjacentToContent:
+                    return HandleCaretAdjacentContentEnterKey();
+                default:
+                    return false;
+            }
         }
 
         internal bool HandleSelectedContentEnterKey()
@@ -1790,6 +1816,18 @@ namespace AvaloniaEdit.RichTextInput
             }
 
             return false;
+        }
+
+        private void InsertPlainNewLine()
+        {
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            using (document.RunUpdate())
+            {
+                if (!_textArea.Selection.IsEmpty)
+                    _textArea.RemoveSelectedText();
+
+                InsertNewLineAt(_textArea.Caret.Offset);
+            }
         }
 
         private void InsertNewLineAt(int offset)

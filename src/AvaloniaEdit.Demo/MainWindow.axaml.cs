@@ -82,6 +82,7 @@ namespace AvaloniaEdit.Demo
             _richTextInputManager.MaxInlineElementWidth = 240;
             _richTextInputManager.MaxImageWidth = 190;
             _richTextInputManager.MaxImageHeight = 130;
+            _richTextInputManager.EnterKeyBehavior = RichTextEnterKeyBehavior.PlainNewLine;
             _richTextInputManager.ElementFactory = CreateRichTextInputElement;
             _richTextInputManager.ContentPointerPressed += RichTextInputManager_ContentPointerPressed;
             _richTextInputManager.ContentDoubleTapped += RichTextInputManager_ContentDoubleTapped;
