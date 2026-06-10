@@ -13,6 +13,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
+using AvaloniaEdit.Indentation.CSharp;
 using AvaloniaEdit.Rendering;
 using AvaloniaEdit.RichTextInput;
 using NUnit.Framework;
@@ -561,6 +562,25 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreSame(image.Content, manager.Items[1].Content);
             Assert.AreEqual(1, manager.Items[0].Offset);
             Assert.AreEqual(5, manager.Items[1].Offset);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[0].Offset));
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[1].Offset));
+        }
+
+        [AvaloniaTest]
+        public void PlainEnterWithCSharpIndentationKeepsRichContentItemsOnReformattedLine()
+        {
+            var textArea = CreateTextArea("if (true) { abcd }");
+            textArea.IndentationStrategy = new CSharpIndentationStrategy(textArea.Options);
+            var manager = RichTextInputManager.Install(textArea);
+            var card = manager.InsertContent(13, RichTextContent.FromCustom("card", 7, "card"));
+            var image = manager.InsertContent(16, RichTextContent.FromCustom("image", 8, "image"));
+            textArea.Caret.Offset = 15;
+
+            textArea.PerformTextInput("\n");
+
+            Assert.AreEqual(2, manager.Items.Count);
+            Assert.AreSame(card.Content, manager.Items[0].Content);
+            Assert.AreSame(image.Content, manager.Items[1].Content);
             Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[0].Offset));
             Assert.AreEqual(RichTextInputManager.ObjectReplacementCharacter, textArea.Document.GetCharAt(manager.Items[1].Offset));
         }
