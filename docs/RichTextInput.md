@@ -398,7 +398,28 @@ messageView.TextArea.TextView.ElementGenerators.Add(new LinkElementGenerator(
 
 ## 粘贴和拖放导入
 
-Ava12 使用 `IDataTransfer/IAsyncDataTransfer`：
+富输入框把粘贴/拖放分成三层，业务可以按需要选择接管深度：
+
+| 层级 | API | 适用场景 |
+| --- | --- | --- |
+| 全量接管 | `PasteHandler` / `DropHandler` | 完全决定本次粘贴或拖放插入什么，适合订单卡片、富文本协议、上传前校验 |
+| 数据导入 | `AsyncDataTransferImporter` / `DataTransferImporter` / `DataObjectImporter` | 把某类剪贴板数据统一转换为富内容，粘贴和拖放都复用 |
+| 单文件接管 | `FileContentImporter` | 多选文件里逐个判断图片、文件夹、exe、zip、文档等，细粒度最高 |
+
+默认行为：
+
+- 普通文本：继续走 AvaloniaEdit 原生文本粘贴。
+- 富输入框复制出来的数据：优先恢复富内容快照。
+- 截图/bitmap：插入 `RichTextContentKind.Image`。
+- 图片文件：`ConvertImageFilesToImages = true` 时尝试转成图片。
+- 文件夹：插入 `RichTextContentKind.Folder`。
+- 其他文件：插入 `RichTextContentKind.File`。
+- `.exe`、压缩包、Office/PDF/文本等不会被执行或读取正文，只作为文件项进入输入框。
+- 多选复制会按剪贴板顺序逐个插入。
+
+### Ava12 接口
+
+Ava12 使用 `IDataTransfer/IAsyncDataTransfer`。只想识别一类数据时，用 importer：
 
 ```csharp
 // 通用导入：粘贴和拖放都会走这里。
@@ -408,12 +429,16 @@ richInput.AsyncDataTransferImporter = async data =>
     var text = await data.TryGetTextAsync();
     return new[] { RichTextContent.FromCustom("custom-payload", text) };
 };
+```
 
-// 只接管 Ctrl+V/粘贴：可以按数据类型决定插入文本、图片、文件或业务组件。
+只接管 Ctrl+V/粘贴时，用 `PasteHandler`：
+
+```csharp
 richInput.PasteHandler = async context =>
 {
+    // 返回且不设置 Handled：继续默认处理。
     if (context.DataTransfer.Contains(DataFormat.Bitmap))
-        return; // UseDefault：不设置 Handled 时继续走默认图片粘贴。
+        return;
 
     var text = await context.DataTransfer.TryGetTextAsync();
     if (text?.StartsWith("order:", StringComparison.OrdinalIgnoreCase) == true)
@@ -427,8 +452,11 @@ richInput.PasteHandler = async context =>
 
     context.InsertText(text);
 };
+```
 
-// 只接管拖放：适合按不同文件类型生成不同业务组件。
+只接管拖放时，用 `DropHandler`：
+
+```csharp
 richInput.DropHandler = async context =>
 {
     var files = context.DataTransfer.TryGetFiles();
@@ -449,6 +477,8 @@ richInput.DropHandler = async context =>
     context.InsertContents(contents);
 };
 ```
+
+### Ava11 接口
 
 Ava11 使用 `IDataObject`：
 
@@ -474,14 +504,9 @@ richInput.DropHandler = context =>
 
 Ava11 会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
 
-多选复制文件时会按剪贴板顺序逐个插入：
+### 多选文件逐项处理
 
-- 图片文件：默认尝试转成 `RichTextContentKind.Image`。
-- 文件夹：插入 `RichTextContentKind.Folder`。
-- 其他文件：插入 `RichTextContentKind.File`。
-- `.exe`、压缩包、Office/PDF/文本等不会被执行或读取正文，只作为文件项进入输入框。
-
-如果要按每个文件做更细处理，使用 `FileContentImporter`。它会在默认转换前逐项调用，返回 `null` 或调用 `CreateDefaultContentAsync()` 就继续走默认逻辑：
+`FileContentImporter` 会在默认转换前逐项调用，适合多选复制里同时包含图片、文件夹、exe、zip、文档的情况。返回 `null` 会跳过当前项；想走默认逻辑时显式调用 `CreateDefaultContentAsync()`：
 
 ```csharp
 richInput.FileContentImporter = async context =>
@@ -500,6 +525,82 @@ richInput.FileContentImporter = async context =>
 
     return await context.CreateDefaultContentAsync();
 };
+```
+
+`RichTextFileImportContext` 提供：
+
+- `Name`、`Source`
+- `StorageItem`：Ava12/Ava11 storage item，可能为空
+- `FileName`：Ava11 文件路径或业务传入路径，可能为空
+- `IsFolder`
+- `IsImage`
+- `IsExecutable`
+- `IsArchive`
+- `IsDocument`
+- `CreateDefaultContentAsync()`
+
+### 常见 IM 场景
+
+文本里识别业务协议：
+
+```csharp
+richInput.PasteHandler = async context =>
+{
+    var text = await context.DataTransfer.TryGetTextAsync();
+    if (text?.StartsWith("im://user/", StringComparison.OrdinalIgnoreCase) == true)
+    {
+        context.InsertContents(new[]
+        {
+            RichTextContent.FromCustom("@用户", ParseUser(text), "mention-user")
+        });
+    }
+};
+```
+
+阻止某些文件，同时允许其他文件默认插入：
+
+```csharp
+richInput.FileContentImporter = context =>
+{
+    if (context.IsExecutable)
+        return Task.FromResult<RichTextContent>(null); // 配合业务提示，不插入内容
+
+    return context.CreateDefaultContentAsync();
+};
+```
+
+如果要阻止整个粘贴动作，可以在 `PasteHandler` 里显式插入空文本或业务提示：
+
+```csharp
+richInput.PasteHandler = context =>
+{
+    if (ShouldBlock(context))
+    {
+        ShowToast("当前内容不允许粘贴");
+        context.InsertText(string.Empty);
+    }
+
+    return Task.CompletedTask;
+};
+```
+
+先插入上传占位卡片，再异步更新状态：
+
+```csharp
+richInput.FileContentImporter = context =>
+{
+    var upload = new UploadTask(context.Name, context.StorageItem ?? context.FileName);
+    var content = RichTextContent.FromCustom(context.Name, upload, "uploading-file");
+    _ = upload.StartAsync();
+    return Task.FromResult(content);
+};
+```
+
+同一套数据在发送框和消息展示框之间复用：
+
+```csharp
+var value = inputRich.GetValue();
+messageRich.SetValue(value);
 ```
 
 ## 复制粘贴快照

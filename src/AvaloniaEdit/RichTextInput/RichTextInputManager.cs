@@ -1654,11 +1654,7 @@ namespace AvaloniaEdit.RichTextInput
                 file is IStorageFolder,
                 () => CreateDefaultContentForFileAsync(file));
             if (FileContentImporter != null)
-            {
-                var content = await FileContentImporter(context);
-                if (content != null)
-                    return content;
-            }
+                return await FileContentImporter(context);
 
             return await context.CreateDefaultContentAsync();
         }
