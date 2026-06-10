@@ -231,6 +231,19 @@ richInput.SelectedContentEnterBehavior =
     RichTextSelectedContentEnterBehavior.KeepDefault; // 完全交还给 TextArea 默认编辑逻辑
 ```
 
+普通光标按 Enter 的行为也可以配置。IM/聊天输入框通常希望回车只插入一个纯换行，不继承代码编辑器的自动缩进；代码编辑器里嵌富内容时可以保留默认逻辑：
+
+```csharp
+// 聊天输入框推荐：普通文本、图片、card 前后回车都直接换行，下一行顶格。
+richInput.EnterKeyBehavior = RichTextEnterKeyBehavior.PlainNewLine;
+
+// 默认：普通文本仍走 TextArea/C# 缩进逻辑；紧贴图片、文件、card 时由富输入接管，避免对象丢失。
+richInput.EnterKeyBehavior = RichTextEnterKeyBehavior.PlainNewLineWhenAdjacentToContent;
+
+// 完全交回 AvaloniaEdit 原生 Enter。
+richInput.EnterKeyBehavior = RichTextEnterKeyBehavior.KeepDefault;
+```
+
 manager 上也提供同名能力，适合工具栏按钮或外部菜单使用：
 
 ```csharp
