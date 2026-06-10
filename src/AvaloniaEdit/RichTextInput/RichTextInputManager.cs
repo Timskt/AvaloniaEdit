@@ -613,6 +613,7 @@ namespace AvaloniaEdit.RichTextInput
         private readonly TextArea _textArea;
         private readonly RichTextInlineObjectGenerator _generator;
         private readonly List<RichTextContentItem> _items = new List<RichTextContentItem>();
+        private readonly List<PendingRichContentReanchor> _pendingReanchors = new List<PendingRichContentReanchor>();
         private readonly Dictionary<string, Func<RichTextElementFactoryContext, Control>> _elementFactories =
             new Dictionary<string, Func<RichTextElementFactoryContext, Control>>(StringComparer.Ordinal);
         private bool _suppressTextSelectionBackgroundForRichContent = true;
@@ -1945,9 +1946,19 @@ namespace AvaloniaEdit.RichTextInput
                 return;
 
             var document = _textArea.Document;
-            var removedItems = GetItemsInRange(e.Offset, e.Offset + e.RemovalLength);
-            foreach (var item in removedItems)
+            var removedItems = GetItemsInRange(e.Offset, e.Offset + e.RemovalLength)
+                .OrderBy(item => item.Offset)
+                .ToArray();
+            var reanchorOffsets = GetReanchorOffsets(e, removedItems.Length);
+            for (var i = 0; i < removedItems.Length; i++)
             {
+                var item = removedItems[i];
+                if (i < reanchorOffsets.Count && _items.Remove(item))
+                {
+                    _pendingReanchors.Add(new PendingRichContentReanchor(item.Content, e.Offset + reanchorOffsets[i]));
+                    continue;
+                }
+
                 RemoveItem(item);
                 if (document?.UndoStack.AcceptChanges == true)
                     document.UndoStack.Push(new RichTextContentUndoOperation(this, item.Content, item.Offset, false, item));
@@ -1956,8 +1967,53 @@ namespace AvaloniaEdit.RichTextInput
 
         private void Document_Changed(object sender, DocumentChangeEventArgs e)
         {
-            if (RemoveInvalidItems() || ShouldRebuildRichContentVisuals(e))
+            var reanchored = ApplyPendingReanchors();
+            if (RemoveInvalidItems() || reanchored || ShouldRebuildRichContentVisuals(e))
                 _textArea.TextView.Redraw();
+        }
+
+        private IReadOnlyList<int> GetReanchorOffsets(DocumentChangeEventArgs e, int removedItemCount)
+        {
+            if (removedItemCount == 0 || e.RemovalLength <= 1 || e.InsertionLength <= 1)
+                return Array.Empty<int>();
+
+            var offsets = new List<int>();
+            for (var i = 0; i < e.InsertedText.TextLength; i++)
+            {
+                if (e.InsertedText.GetCharAt(i) == ObjectReplacementCharacter)
+                    offsets.Add(i);
+            }
+
+            if (offsets.Count == 0)
+                return Array.Empty<int>();
+
+            if (offsets.Count > removedItemCount)
+                offsets.RemoveRange(removedItemCount, offsets.Count - removedItemCount);
+
+            return offsets;
+        }
+
+        private bool ApplyPendingReanchors()
+        {
+            if (_pendingReanchors.Count == 0)
+                return false;
+
+            var document = _textArea.Document;
+            var reanchored = false;
+            foreach (var pending in _pendingReanchors)
+            {
+                if (document != null
+                    && pending.Offset >= 0
+                    && pending.Offset < document.TextLength
+                    && document.GetCharAt(pending.Offset) == ObjectReplacementCharacter)
+                {
+                    AddItem(pending.Offset, pending.Content, false);
+                    reanchored = true;
+                }
+            }
+
+            _pendingReanchors.Clear();
+            return reanchored;
         }
 
         private bool ShouldRebuildRichContentVisuals(DocumentChangeEventArgs e)
@@ -2018,12 +2074,13 @@ namespace AvaloniaEdit.RichTextInput
                 .ToArray();
         }
 
-        private RichTextContentItem AddItem(int offset, RichTextContent content)
+        private RichTextContentItem AddItem(int offset, RichTextContent content, bool raiseEvent = true)
         {
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             var item = new RichTextContentItem(content, new AnchorSegment(document, offset, ObjectReplacementString.Length));
             _items.Add(item);
-            ContentInserted?.Invoke(this, new RichTextContentChangedEventArgs(item));
+            if (raiseEvent)
+                ContentInserted?.Invoke(this, new RichTextContentChangedEventArgs(item));
             _textArea.TextView.Redraw();
             return item;
         }
@@ -2169,6 +2226,19 @@ namespace AvaloniaEdit.RichTextInput
                 else
                     _manager.RemoveItem(_item);
             }
+        }
+
+        private sealed class PendingRichContentReanchor
+        {
+            public PendingRichContentReanchor(RichTextContent content, int offset)
+            {
+                Content = content;
+                Offset = offset;
+            }
+
+            public RichTextContent Content { get; }
+
+            public int Offset { get; }
         }
 
         public static Control CreateDefaultElement(RichTextContentItem item)
