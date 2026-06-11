@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using Avalonia;
@@ -200,9 +201,12 @@ namespace AvaloniaEdit.RichTextInput
             Offset = offset;
             ReplaceSelection = replaceSelection;
             Contents = new List<RichTextContent>();
+            Formats = GetFormats(dataObject);
         }
 
         public IDataObject DataObject { get; }
+
+        public IReadOnlyList<string> Formats { get; }
 
         public int Offset { get; }
 
@@ -242,6 +246,27 @@ namespace AvaloniaEdit.RichTextInput
             Contents.Clear();
             Text = null;
             Handled = false;
+        }
+
+        public bool ContainsFormat(string format)
+        {
+            if (string.IsNullOrWhiteSpace(format))
+                return false;
+
+            return Formats.Any(existing =>
+                string.Equals(existing, format, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static IReadOnlyList<string> GetFormats(IDataObject dataObject)
+        {
+            try
+            {
+                return (dataObject.GetDataFormats() ?? Array.Empty<string>()).ToArray();
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
         }
     }
 
@@ -253,9 +278,12 @@ namespace AvaloniaEdit.RichTextInput
             Offset = offset;
             ReplaceSelection = replaceSelection;
             Contents = new List<RichTextContent>();
+            Formats = GetFormats(dataObject);
         }
 
         public IDataObject DataObject { get; }
+
+        public IReadOnlyList<string> Formats { get; }
 
         public int Offset { get; }
 
@@ -295,6 +323,27 @@ namespace AvaloniaEdit.RichTextInput
             Contents.Clear();
             Text = null;
             Handled = false;
+        }
+
+        public bool ContainsFormat(string format)
+        {
+            if (string.IsNullOrWhiteSpace(format))
+                return false;
+
+            return Formats.Any(existing =>
+                string.Equals(existing, format, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static IReadOnlyList<string> GetFormats(IDataObject dataObject)
+        {
+            try
+            {
+                return (dataObject.GetDataFormats() ?? Array.Empty<string>()).ToArray();
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
         }
     }
 
@@ -616,15 +665,19 @@ namespace AvaloniaEdit.RichTextInput
             "image/bmp",
             "image/gif",
             "image/tiff",
+            "image/webp",
+            "image/x-png",
             "PNG",
             "JFIF",
             "JPEG",
             "TIFF",
             "BMP",
             "GIF",
+            "WEBP",
             "jp2",
             "JPEG 2000",
             "TIFF picture",
+            "NeXT TIFF v4.0 pasteboard type",
             "PNGf",
             "JPEG picture",
             "GIF picture",
@@ -638,6 +691,7 @@ namespace AvaloniaEdit.RichTextInput
             "public.tiff",
             "public.gif",
             "public.bmp",
+            "public.webp",
             "public.heic",
             "public.heif",
             "public.avif",
@@ -1919,7 +1973,8 @@ namespace AvaloniaEdit.RichTextInput
             if (dataObject == null)
                 return null;
 
-            var formats = (dataObject.GetDataFormats() ?? Array.Empty<string>())
+            var dataFormats = dataObject.GetDataFormats() ?? Array.Empty<string>();
+            var formats = dataFormats
                 .Concat(BitmapDataFormats)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Where(IsBitmapDataFormat)
@@ -1930,17 +1985,9 @@ namespace AvaloniaEdit.RichTextInput
                 try
                 {
                     var value = dataObject.Get(format);
-                    switch (value)
-                    {
-                        case Bitmap bitmap:
-                            return bitmap;
-                        case Stream stream:
-                            if (stream.CanSeek)
-                                stream.Position = 0;
-                            return TryCreateBitmap(stream, IsDibDataFormat(format));
-                        case byte[] bytes:
-                            return TryCreateBitmap(bytes, IsDibDataFormat(format));
-                    }
+                    var bitmap = TryCreateBitmapFromClipboardData(value, format);
+                    if (bitmap != null)
+                        return bitmap;
                 }
                 catch
                 {
@@ -1973,6 +2020,62 @@ namespace AvaloniaEdit.RichTextInput
 
             using (var memory = new MemoryStream(bytes))
                 return new Bitmap(memory);
+        }
+
+        private static Bitmap TryCreateBitmapFromClipboardData(object value, string format)
+        {
+            try
+            {
+                switch (value)
+                {
+                    case Bitmap bitmap:
+                        return bitmap;
+                    case Stream stream:
+                    {
+                        if (stream.CanSeek)
+                            stream.Position = 0;
+                        using (var memory = new MemoryStream())
+                        {
+                            stream.CopyTo(memory);
+                            return TryCreateBitmapFromClipboardBytes(memory.ToArray(), format);
+                        }
+                    }
+                    case byte[] bytes:
+                        return TryCreateBitmapFromClipboardBytes(bytes, format);
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private static Bitmap TryCreateBitmapFromClipboardBytes(byte[] bytes, string format)
+        {
+            if (bytes == null || bytes.Length == 0)
+                return null;
+
+            try
+            {
+                return TryCreateBitmap(bytes, IsDibDataFormat(format));
+            }
+            catch
+            {
+            }
+
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || !IsBitmapDataFormat(format))
+                return null;
+
+            try
+            {
+                var pngBytes = MacPasteboard.TryConvertImageBytesToPng(bytes);
+                return pngBytes == null ? null : TryCreateBitmap(pngBytes, false);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static bool HasBmpFileHeader(byte[] bytes)
@@ -2559,6 +2662,118 @@ namespace AvaloniaEdit.RichTextInput
             _textArea.Focus();
             _textArea.Selection = Selection.Create(_textArea, anchorOffset, item.EndOffset);
             _textArea.Caret.Offset = item.EndOffset;
+        }
+
+        private static class MacPasteboard
+        {
+            private const string ObjectiveCLibrary = "/usr/lib/libobjc.A.dylib";
+            private const string SystemLibrary = "/usr/lib/libSystem.B.dylib";
+            private const string AppKitFramework = "/System/Library/Frameworks/AppKit.framework/AppKit";
+            private const int RtldNow = 2;
+            private static readonly UIntPtr NSBitmapImageFileTypePng = new UIntPtr(4);
+
+            public static byte[] TryConvertImageBytesToPng(byte[] bytes)
+            {
+                if (bytes == null || bytes.Length == 0)
+                    return null;
+
+                try
+                {
+                    var dataClass = GetObjectiveCClass("NSData");
+                    var imageRepClass = GetObjectiveCClass("NSBitmapImageRep");
+                    var dictionaryClass = GetObjectiveCClass("NSDictionary");
+                    if (dataClass == IntPtr.Zero || imageRepClass == IntPtr.Zero || dictionaryClass == IntPtr.Zero)
+                        return null;
+
+                    var data = CreateNSData(dataClass, bytes);
+                    if (data == IntPtr.Zero)
+                        return null;
+
+                    var imageRep = IntPtr_objc_msgSend_IntPtr(imageRepClass, sel_registerName("imageRepWithData:"), data);
+                    if (imageRep == IntPtr.Zero)
+                        return null;
+
+                    var properties = IntPtr_objc_msgSend(dictionaryClass, sel_registerName("dictionary"));
+                    var pngData = IntPtr_objc_msgSend_UIntPtr_IntPtr(
+                        imageRep,
+                        sel_registerName("representationUsingType:properties:"),
+                        NSBitmapImageFileTypePng,
+                        properties);
+
+                    return pngData == IntPtr.Zero ? null : CopyNSDataBytes(pngData);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            private static IntPtr GetObjectiveCClass(string name)
+            {
+                var cls = objc_getClass(name);
+                if (cls != IntPtr.Zero)
+                    return cls;
+
+                dlopen(AppKitFramework, RtldNow);
+                return objc_getClass(name);
+            }
+
+            private static IntPtr CreateNSData(IntPtr dataClass, byte[] bytes)
+            {
+                var pointer = Marshal.AllocHGlobal(bytes.Length);
+                try
+                {
+                    Marshal.Copy(bytes, 0, pointer, bytes.Length);
+                    return IntPtr_objc_msgSend_IntPtr_UIntPtr(
+                        dataClass,
+                        sel_registerName("dataWithBytes:length:"),
+                        pointer,
+                        new UIntPtr((uint)bytes.Length));
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(pointer);
+                }
+            }
+
+            private static byte[] CopyNSDataBytes(IntPtr data)
+            {
+                var length = UIntPtr_objc_msgSend(data, sel_registerName("length")).ToUInt64();
+                if (length == 0 || length > int.MaxValue)
+                    return null;
+
+                var bytesPointer = IntPtr_objc_msgSend(data, sel_registerName("bytes"));
+                if (bytesPointer == IntPtr.Zero)
+                    return null;
+
+                var bytes = new byte[(int)length];
+                Marshal.Copy(bytesPointer, bytes, 0, bytes.Length);
+                return bytes;
+            }
+
+            [DllImport(ObjectiveCLibrary, EntryPoint = "objc_getClass")]
+            private static extern IntPtr objc_getClass(string name);
+
+            [DllImport(ObjectiveCLibrary, EntryPoint = "sel_registerName")]
+            private static extern IntPtr sel_registerName(string name);
+
+            [DllImport(SystemLibrary, EntryPoint = "dlopen")]
+            private static extern IntPtr dlopen(string path, int mode);
+
+            [DllImport(ObjectiveCLibrary, EntryPoint = "objc_msgSend")]
+            private static extern IntPtr IntPtr_objc_msgSend(IntPtr receiver, IntPtr selector);
+
+            [DllImport(ObjectiveCLibrary, EntryPoint = "objc_msgSend")]
+            private static extern IntPtr IntPtr_objc_msgSend_IntPtr(IntPtr receiver, IntPtr selector, IntPtr arg1);
+
+            [DllImport(ObjectiveCLibrary, EntryPoint = "objc_msgSend")]
+            private static extern IntPtr IntPtr_objc_msgSend_IntPtr_UIntPtr(IntPtr receiver, IntPtr selector, IntPtr arg1, UIntPtr arg2);
+
+            [DllImport(ObjectiveCLibrary, EntryPoint = "objc_msgSend")]
+            private static extern IntPtr IntPtr_objc_msgSend_UIntPtr_IntPtr(IntPtr receiver, IntPtr selector, UIntPtr arg1, IntPtr arg2);
+
+            [DllImport(ObjectiveCLibrary, EntryPoint = "objc_msgSend")]
+            private static extern UIntPtr UIntPtr_objc_msgSend(IntPtr receiver, IntPtr selector);
         }
 
         private sealed class RichTextContentUndoOperation : IUndoableOperation
