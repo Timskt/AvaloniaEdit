@@ -471,6 +471,8 @@ namespace AvaloniaEdit.Rendering
         private readonly Dictionary<Control, InlineObjectPlacementAnimation> _inlineObjectPlacementAnimations =
             new Dictionary<Control, InlineObjectPlacementAnimation>();
         private DispatcherTimer _inlineObjectPlacementTimer;
+        private Vector _lastInlineObjectArrangeScrollOffset;
+        private bool _hasLastInlineObjectArrangeScrollOffset;
 
         /// <summary>
         /// Gets/sets whether inline UI objects should move smoothly when their text line position changes.
@@ -1295,6 +1297,7 @@ namespace AvaloniaEdit.Rendering
 
             if (_visibleVisualLines != null)
             {
+                var animateInlineObjectPlacement = ShouldAnimateInlineObjectPlacementForArrange();
                 var pos = new Point(-_scrollOffset.X, -_clippedPixelsOnTop);
                 var defaultLineHeight = _defaultLineHeight;
                 foreach (var visualLine in _visibleVisualLines)
@@ -1315,7 +1318,7 @@ namespace AvaloniaEdit.Rendering
                                 var y = pos.Y + textLine.Baseline - inline.Baseline;
                                 var width = desiredSize.Width;
                                 var height = desiredSize.Height;
-                                ArrangeInlineObject(inline.Element, new Rect(x, y, width, height));
+                                ArrangeInlineObject(inline.Element, new Rect(x, y, width, height), animateInlineObjectPlacement);
                             }
 
                             offset += span.Length;
@@ -1327,15 +1330,35 @@ namespace AvaloniaEdit.Rendering
                 }
             }
 
+            _lastInlineObjectArrangeScrollOffset = _scrollOffset;
+            _hasLastInlineObjectArrangeScrollOffset = true;
+
             InvalidateCursorIfPointerWithinTextView();
 
             return finalSize;
         }
 
-        private void ArrangeInlineObject(Control element, Rect targetRect)
+        private bool ShouldAnimateInlineObjectPlacementForArrange()
         {
             if (!AnimateInlineObjectPlacement
                 || InlineObjectPlacementAnimationDuration <= TimeSpan.Zero)
+            {
+                return false;
+            }
+
+            if (!_hasLastInlineObjectArrangeScrollOffset)
+                return false;
+
+            if (_lastInlineObjectArrangeScrollOffset.IsClose(_scrollOffset))
+                return true;
+
+            _inlineObjectPlacementAnimations.Clear();
+            return false;
+        }
+
+        private void ArrangeInlineObject(Control element, Rect targetRect, bool animatePlacement)
+        {
+            if (!animatePlacement)
             {
                 _inlineObjectPlacementAnimations.Remove(element);
                 element.Arrange(targetRect);
