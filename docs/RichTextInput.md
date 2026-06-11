@@ -706,6 +706,8 @@ messageRich.SetValue(value);
 
 同进程复制粘贴会使用一个有界 live cache 保存本次剪贴板中的 `RichTextContent`，可以完整保留 Bitmap、自定义 `Value`、`Metadata` 和 `StyleKey`。跨进程、应用重启或 cache 失效后，图片会优先从 `Source` 对应的本地文件恢复；没有可读 `Source` 时会尝试把图片数据嵌入富快照。
 
+某些系统剪贴板或平台实现可能不会保留自定义格式，只把 `\uFFFC` 对象占位符降级成空白文本。同进程内会额外记录最近一次富内容复制快照；如果粘贴时只读到了纯文本，但文本和刚复制的富内容快照匹配，仍会恢复图片、文件和自定义组件。
+
 ```csharp
 // 每张内存图片最多嵌入 4 MB，设置为 0 可关闭嵌入。
 richInput.MaxEmbeddedClipboardImageBytes = 4 * 1024 * 1024;

@@ -291,6 +291,45 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public async Task RichClipboardFallbackRestoresSnapshotWhenClipboardDropsCustomFormat()
+        {
+            RichTextInputManager.ClearRichClipboardFallback();
+            var payload = new object();
+            var sourceTextArea = CreateTextArea("hello ");
+            var source = RichTextInputManager.Install(sourceTextArea);
+            source.InsertCustom("card", payload, "business-card");
+            sourceTextArea.Document.Insert(sourceTextArea.Document.TextLength, " done");
+            var dataTransfer = new DataTransfer();
+
+            var copied = source.TrySetRichClipboardData(dataTransfer, new SimpleSegment(0, sourceTextArea.Document.TextLength));
+            var plainOnlyDataTransfer = new DataTransfer();
+            plainOnlyDataTransfer.Add(DataTransferItem.CreateText(
+                sourceTextArea.Document.Text.Replace(RichTextInputManager.ObjectReplacementCharacter, ' ')));
+            var targetTextArea = CreateTextArea("");
+            var target = RichTextInputManager.Install(targetTextArea);
+            target.PasteHandler = async context =>
+            {
+                if (target.CanInsert(context.DataTransfer))
+                {
+                    context.UseDefault();
+                    return;
+                }
+
+                context.InsertText(await context.DataTransfer.TryGetTextAsync());
+            };
+
+            var inserted = await target.InsertPasteDataAsync((IAsyncDataTransfer)plainOnlyDataTransfer, 0, false);
+
+            Assert.IsTrue(copied);
+            Assert.IsTrue(inserted);
+            Assert.AreEqual(sourceTextArea.Document.Text, targetTextArea.Document.Text);
+            Assert.AreEqual(1, target.Items.Count);
+            Assert.AreEqual(RichTextContentKind.Custom, target.Items[0].Content.Kind);
+            Assert.AreSame(payload, target.Items[0].Content.Value);
+            Assert.AreEqual("business-card", target.Items[0].Content.StyleKey);
+        }
+
+        [AvaloniaTest]
         public async Task InsertDataAsyncAddsBitmapContentFromWindowsDibDataTransfer()
         {
             var textArea = CreateTextArea("ab");

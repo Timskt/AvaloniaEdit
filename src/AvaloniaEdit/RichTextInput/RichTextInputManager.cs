@@ -760,6 +760,8 @@ namespace AvaloniaEdit.RichTextInput
         private static readonly Dictionary<string, RichTextContent> LiveClipboardContentCache =
             new Dictionary<string, RichTextContent>(StringComparer.Ordinal);
         private static readonly Queue<string> LiveClipboardContentCacheOrder = new Queue<string>();
+        private static readonly object RichClipboardFallbackLock = new object();
+        private static RichClipboardFallbackSnapshot _richClipboardFallbackSnapshot;
 
         private readonly TextArea _textArea;
         private readonly RichTextInlineObjectGenerator _generator;
@@ -1261,7 +1263,8 @@ namespace AvaloniaEdit.RichTextInput
             return CanImportDataTransfer?.Invoke(dataTransfer) == true
                 || ContainsBitmapData(dataTransfer)
                 || dataTransfer.Contains(DataFormat.File)
-                || dataTransfer.Contains(RichTextClipboardFormat);
+                || dataTransfer.Contains(RichTextClipboardFormat)
+                || CanRestoreRichClipboardFallback(GetDataTransferText(dataTransfer));
         }
 
         public bool CanInsert(IAsyncDataTransfer dataTransfer)
@@ -1272,7 +1275,8 @@ namespace AvaloniaEdit.RichTextInput
             return CanImportAsyncDataTransfer?.Invoke(dataTransfer) == true
                 || ContainsBitmapData(dataTransfer)
                 || dataTransfer.Contains(DataFormat.File)
-                || dataTransfer.Contains(RichTextClipboardFormat);
+                || dataTransfer.Contains(RichTextClipboardFormat)
+                || (dataTransfer.Contains(DataFormat.Text) && HasRichClipboardFallback());
         }
 
         public bool CanPaste(IAsyncDataTransfer dataTransfer)
@@ -1399,6 +1403,9 @@ namespace AvaloniaEdit.RichTextInput
             if (!string.IsNullOrEmpty(richTextPayload))
                 return InsertSerializedSnapshot(richTextPayload, offset, replaceSelection);
 
+            if (TryGetRichClipboardFallbackPayload(GetDataTransferText(dataTransfer), out var fallbackPayload))
+                return InsertSerializedSnapshot(fallbackPayload, offset, replaceSelection);
+
             if (DataTransferImporter != null && CanImportDataTransfer?.Invoke(dataTransfer) == true)
             {
                 var imported = await DataTransferImporter(dataTransfer);
@@ -1435,6 +1442,9 @@ namespace AvaloniaEdit.RichTextInput
             var richTextPayload = await dataTransfer.TryGetValueAsync(RichTextClipboardFormat);
             if (!string.IsNullOrEmpty(richTextPayload))
                 return InsertSerializedSnapshot(richTextPayload, offset, replaceSelection);
+
+            if (TryGetRichClipboardFallbackPayload(await GetDataTransferTextAsync(dataTransfer), out var fallbackPayload))
+                return InsertSerializedSnapshot(fallbackPayload, offset, replaceSelection);
 
             if (AsyncDataTransferImporter != null && CanImportAsyncDataTransfer?.Invoke(dataTransfer) == true)
             {
@@ -1765,8 +1775,10 @@ namespace AvaloniaEdit.RichTextInput
             if (snapshot.Items.Count == 0)
                 return false;
 
+            var payload = JsonSerializer.Serialize(snapshot);
+            RegisterRichClipboardFallback(snapshot, payload);
             var item = new DataTransferItem();
-            item.Set(RichTextClipboardFormat, JsonSerializer.Serialize(snapshot));
+            item.Set(RichTextClipboardFormat, payload);
             dataTransfer.Add(item);
             return true;
         }
@@ -1868,6 +1880,109 @@ namespace AvaloniaEdit.RichTextInput
             {
                 LiveClipboardContentCache.Clear();
                 LiveClipboardContentCacheOrder.Clear();
+            }
+        }
+
+        internal static void ClearRichClipboardFallback()
+        {
+            lock (RichClipboardFallbackLock)
+                _richClipboardFallbackSnapshot = null;
+        }
+
+        private static void RegisterRichClipboardFallback(RichTextInputSnapshot snapshot, string payload)
+        {
+            if (snapshot == null
+                || snapshot.Items == null
+                || snapshot.Items.Count == 0
+                || string.IsNullOrEmpty(payload))
+            {
+                return;
+            }
+
+            lock (RichClipboardFallbackLock)
+            {
+                _richClipboardFallbackSnapshot = new RichClipboardFallbackSnapshot(
+                    payload,
+                    NormalizeClipboardTextForComparison(snapshot.Text, false),
+                    NormalizeClipboardTextForComparison(snapshot.Text, true),
+                    DateTimeOffset.UtcNow);
+            }
+        }
+
+        private static bool HasRichClipboardFallback()
+        {
+            lock (RichClipboardFallbackLock)
+                return _richClipboardFallbackSnapshot is { IsExpired: false };
+        }
+
+        private static bool CanRestoreRichClipboardFallback(string text)
+        {
+            return TryGetRichClipboardFallbackPayload(text, out _);
+        }
+
+        private static bool TryGetRichClipboardFallbackPayload(string text, out string payload)
+        {
+            payload = null;
+            if (text == null)
+                return false;
+
+            var normalizedText = NormalizeClipboardTextForComparison(text, false);
+            var spaceNormalizedText = NormalizeClipboardTextForComparison(text, true);
+            lock (RichClipboardFallbackLock)
+            {
+                var snapshot = _richClipboardFallbackSnapshot;
+                if (snapshot == null || snapshot.IsExpired)
+                    return false;
+
+                if (string.Equals(normalizedText, snapshot.Text, StringComparison.Ordinal)
+                    || string.Equals(spaceNormalizedText, snapshot.TextWithObjectPlaceholdersAsSpaces, StringComparison.Ordinal))
+                {
+                    payload = snapshot.Payload;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string NormalizeClipboardTextForComparison(string text, bool replaceObjectReplacementWithSpace)
+        {
+            if (text == null)
+                return null;
+
+            text = text.Replace("\r\n", "\n").Replace('\r', '\n');
+            return replaceObjectReplacementWithSpace
+                ? text.Replace(ObjectReplacementCharacter, ' ')
+                : text;
+        }
+
+        private static string GetDataTransferText(IDataTransfer dataTransfer)
+        {
+            if (dataTransfer == null || !dataTransfer.Contains(DataFormat.Text))
+                return null;
+
+            try
+            {
+                return dataTransfer.TryGetText();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static async Task<string> GetDataTransferTextAsync(IAsyncDataTransfer dataTransfer)
+        {
+            if (dataTransfer == null || !dataTransfer.Contains(DataFormat.Text))
+                return null;
+
+            try
+            {
+                return await dataTransfer.TryGetTextAsync();
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -3379,6 +3494,33 @@ namespace AvaloniaEdit.RichTextInput
                 }
             };
         }
+
+        private sealed class RichClipboardFallbackSnapshot
+        {
+            private static readonly TimeSpan Expiration = TimeSpan.FromMinutes(10);
+
+            public RichClipboardFallbackSnapshot(
+                string payload,
+                string text,
+                string textWithObjectPlaceholdersAsSpaces,
+                DateTimeOffset createdAt)
+            {
+                Payload = payload;
+                Text = text;
+                TextWithObjectPlaceholdersAsSpaces = textWithObjectPlaceholdersAsSpaces;
+                CreatedAt = createdAt;
+            }
+
+            public string Payload { get; }
+
+            public string Text { get; }
+
+            public string TextWithObjectPlaceholdersAsSpaces { get; }
+
+            public DateTimeOffset CreatedAt { get; }
+
+            public bool IsExpired => DateTimeOffset.UtcNow - CreatedAt > Expiration;
+        }
     }
 
     internal sealed class RichTextInlineObjectGenerator : VisualLineElementGenerator
@@ -3479,5 +3621,6 @@ namespace AvaloniaEdit.RichTextInput
             Padding = style.Padding;
             Classes.Set("selected", selected);
         }
+
     }
 }
