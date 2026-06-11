@@ -276,6 +276,47 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public async Task RichClipboardFallbackRestoresSnapshotWhenClipboardDropsCustomFormat()
+        {
+            RichTextInputManager.ClearRichClipboardFallback();
+            var payload = new object();
+            var sourceTextArea = CreateTextArea("hello ");
+            var source = RichTextInputManager.Install(sourceTextArea);
+            source.InsertCustom("card", payload, "business-card");
+            sourceTextArea.Document.Insert(sourceTextArea.Document.TextLength, " done");
+            var dataObject = new DataObject();
+
+            var copied = source.TrySetRichClipboardData(dataObject, new SimpleSegment(0, sourceTextArea.Document.TextLength));
+            var plainOnlyDataObject = new DataObject();
+            plainOnlyDataObject.Set(
+                DataFormats.Text,
+                sourceTextArea.Document.Text.Replace(RichTextInputManager.ObjectReplacementCharacter, ' '));
+            var targetTextArea = CreateTextArea("");
+            var target = RichTextInputManager.Install(targetTextArea);
+            target.PasteHandler = context =>
+            {
+                if (target.CanInsertDefaultData(context.DataObject))
+                {
+                    context.UseDefault();
+                    return Task.CompletedTask;
+                }
+
+                context.InsertText(context.DataObject.Get(DataFormats.Text) as string);
+                return Task.CompletedTask;
+            };
+
+            var inserted = await target.InsertPasteDataAsync(plainOnlyDataObject, 0, false);
+
+            Assert.IsTrue(copied);
+            Assert.IsTrue(inserted);
+            Assert.AreEqual(sourceTextArea.Document.Text, targetTextArea.Document.Text);
+            Assert.AreEqual(1, target.Items.Count);
+            Assert.AreEqual(RichTextContentKind.Custom, target.Items[0].Content.Kind);
+            Assert.AreSame(payload, target.Items[0].Content.Value);
+            Assert.AreEqual("business-card", target.Items[0].Content.StyleKey);
+        }
+
+        [AvaloniaTest]
         public async Task InsertDataAsyncAddsBitmapContentFromMacTiffClipboardData()
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
