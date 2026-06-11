@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 using Avalonia.Input.TextInput;
@@ -210,6 +211,68 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
             Assert.AreEqual(1, manager.Items.Count);
             Assert.AreEqual(RichTextContentKind.Image, manager.Items[0].Content.Kind);
+        }
+
+        [AvaloniaTest]
+        public async Task RichClipboardRestoresLiveBitmapContent()
+        {
+            var sourceTextArea = CreateTextArea("");
+            var source = RichTextInputManager.Install(sourceTextArea);
+            using var imageStream = new MemoryStream(CreateSinglePixelBmp32());
+            source.InsertImage(new Bitmap(imageStream), "screenshot");
+            var dataObject = new DataObject();
+            var sourceBitmap = source.Items[0].Content.Value;
+
+            var copied = source.TrySetRichClipboardData(dataObject, new SimpleSegment(0, sourceTextArea.Document.TextLength));
+            var targetTextArea = CreateTextArea("");
+            var target = RichTextInputManager.Install(targetTextArea);
+            var inserted = await target.InsertDataAsync(dataObject, 0, false);
+
+            Assert.IsTrue(copied);
+            Assert.IsTrue(inserted);
+            Assert.AreEqual(RichTextInputManager.ObjectReplacementString, targetTextArea.Document.Text);
+            Assert.AreEqual(1, target.Items.Count);
+            Assert.AreEqual(RichTextContentKind.Image, target.Items[0].Content.Kind);
+            Assert.IsInstanceOf<Bitmap>(target.Items[0].Content.Value);
+            Assert.AreSame(sourceBitmap, target.Items[0].Content.Value);
+        }
+
+        [AvaloniaTest]
+        public async Task RichClipboardMixedSelectionPrefersRichSnapshotOverPlainText()
+        {
+            var payload = new object();
+            var sourceTextArea = CreateTextArea("hello ");
+            var source = RichTextInputManager.Install(sourceTextArea);
+            using var imageStream = new MemoryStream(CreateSinglePixelBmp32());
+            source.InsertImage(new Bitmap(imageStream), "screenshot");
+            sourceTextArea.Document.Insert(sourceTextArea.Document.TextLength, " ");
+            source.InsertCustom("card", payload, "business-card");
+            sourceTextArea.Document.Insert(sourceTextArea.Document.TextLength, " ");
+            source.InsertFileName("/tmp/report.pdf");
+            sourceTextArea.Document.Insert(sourceTextArea.Document.TextLength, " done");
+
+            var dataObject = new DataObject();
+            dataObject.Set(DataFormats.Text, "hello Image card report.pdf done");
+            var copied = source.TrySetRichClipboardData(dataObject, new SimpleSegment(0, sourceTextArea.Document.TextLength));
+            var targetTextArea = CreateTextArea("");
+            var target = RichTextInputManager.Install(targetTextArea);
+
+            var inserted = await target.InsertPasteDataAsync(dataObject, 0, false);
+
+            Assert.IsTrue(copied);
+            Assert.IsTrue(inserted);
+            Assert.AreEqual(sourceTextArea.Document.Text, targetTextArea.Document.Text);
+            Assert.AreEqual(3, target.Items.Count);
+            Assert.AreEqual(new[]
+            {
+                RichTextContentKind.Image,
+                RichTextContentKind.Custom,
+                RichTextContentKind.File
+            }, target.Items.Select(item => item.Content.Kind).ToArray());
+            Assert.IsInstanceOf<Bitmap>(target.Items[0].Content.Value);
+            Assert.AreSame(payload, target.Items[1].Content.Value);
+            Assert.AreEqual("business-card", target.Items[1].Content.StyleKey);
+            Assert.AreEqual("report.pdf", target.Items[2].Content.DisplayText);
         }
 
         [AvaloniaTest]
@@ -752,6 +815,41 @@ namespace AvaloniaEdit.Tests.RichTextInput
 
             Assert.GreaterOrEqual(inlineIndex, 0);
             Assert.Greater(preeditIndex, inlineIndex);
+        }
+
+        [AvaloniaTest]
+        public void InlineContentDoesNotAnimateWhenTextViewScrolls()
+        {
+            var text = "line0\na" + RichTextInputManager.ObjectReplacementString + "b\n"
+                + string.Join("\n", Enumerable.Range(0, 40).Select(i => "line" + i));
+            var textArea = CreateTextArea(text);
+            textArea.TextView.AnimateInlineObjectPlacement = true;
+            textArea.TextView.InlineObjectPlacementAnimationMinimumDistance = 0;
+            var manager = RichTextInputManager.Install(textArea);
+            manager.ElementFactory = item => new Border
+            {
+                Width = 40,
+                Height = 40
+            };
+            manager.SetValue(new RichTextInputValue(text, new[]
+            {
+                new RichTextInputValueItem
+                {
+                    Offset = "line0\na".Length,
+                    Content = RichTextContent.FromCustom("card", 1)
+                }
+            }));
+
+            textArea.TextView.Measure(new Size(300, 60));
+            textArea.TextView.Arrange(new Rect(0, 0, 300, 60));
+            var before = textArea.TextView.GetVisualChildren().OfType<RichTextInlineContentControl>().Single().Bounds;
+
+            ((IScrollable)textArea.TextView).Offset = new Vector(0, 16);
+            textArea.TextView.Measure(new Size(300, 60));
+            textArea.TextView.Arrange(new Rect(0, 0, 300, 60));
+            var after = textArea.TextView.GetVisualChildren().OfType<RichTextInlineContentControl>().Single().Bounds;
+
+            Assert.AreEqual(before.Y - 16, after.Y, 0.5);
         }
 
         [AvaloniaTest]

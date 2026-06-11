@@ -712,6 +712,17 @@ messageRich.SetValue(value);
 
 复制时会同时写入普通文本和富内容快照。粘回支持 `RichTextInputManager` 的编辑器时会恢复富内容元数据；粘到普通输入框时仍是普通文本。
 
+全选复制或局部选择复制时，剪贴板里通常会同时存在 `DataFormats.Text` 和 `RichTextClipboardFormat`。富输入目标会优先读取 `RichTextClipboardFormat`，不会把图片、文件或业务组件按 `Image` / `report.pdf` 这类显示文本插入；普通控件才使用纯文本降级。
+
+同进程复制粘贴会使用一个有界 live cache 保存本次剪贴板中的 `RichTextContent`，可以完整保留 Bitmap、自定义 `Value`、`Metadata` 和 `StyleKey`。跨进程、应用重启或 cache 失效后，图片会优先从 `Source` 对应的本地文件恢复；没有可读 `Source` 时会尝试把图片数据嵌入富快照。
+
+```csharp
+// 每张内存图片最多嵌入 4 MB，设置为 0 可关闭嵌入。
+richInput.MaxEmbeddedClipboardImageBytes = 4 * 1024 * 1024;
+```
+
+超过上限或无法编码的内存图片仍会保留 `RichTextContentKind.Image` 和占位符，但默认渲染没有 Bitmap 时只能显示为图片项的降级样式。需要跨进程稳定恢复时，建议给图片内容提供可读的 `Source`，或者在业务协议里自己存储缩略图/资源 ID。
+
 同应用内从一个富输入框赋值给另一个富输入框或会话展示框，优先使用 live value。它会保留 Bitmap、自定义 `Value`、`Metadata` 和 `StyleKey`，目标控件会按自己的最大宽度和渲染工厂重新布局：
 
 ```csharp
@@ -727,6 +738,8 @@ otherRich.SetSerializedSnapshot(snapshotJson);
 ```
 
 `SerializeSnapshot` 适合存储或跨进程传递；如果要完整保留内存对象、Bitmap 或业务对象引用，用 `GetValue/SetValue`。
+
+滚动查看长文本时，图片、文件和业务卡片会立即跟随文本层移动，不参与位置过渡；位置过渡只用于 IME 确认、插入、删除导致的同一行布局变化。
 
 ## 纯文本降级
 

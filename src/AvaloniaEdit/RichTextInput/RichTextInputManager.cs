@@ -13,6 +13,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
@@ -165,6 +166,12 @@ namespace AvaloniaEdit.RichTextInput
         public string Source { get; set; }
 
         public string StyleKey { get; set; }
+
+        public string ImageMimeType { get; set; }
+
+        public string ImageData { get; set; }
+
+        public string LiveContentKey { get; set; }
     }
 
     public sealed class RichTextInputValue
@@ -705,6 +712,11 @@ namespace AvaloniaEdit.RichTextInput
             "CF_DIBV5",
             "Format17"
         };
+        private const int MaxLiveClipboardContentCacheSize = 512;
+        private static readonly object LiveClipboardContentCacheLock = new object();
+        private static readonly Dictionary<string, RichTextContent> LiveClipboardContentCache =
+            new Dictionary<string, RichTextContent>(StringComparer.Ordinal);
+        private static readonly Queue<string> LiveClipboardContentCacheOrder = new Queue<string>();
 
         private readonly TextArea _textArea;
         private readonly RichTextInlineObjectGenerator _generator;
@@ -758,6 +770,8 @@ namespace AvaloniaEdit.RichTextInput
         public double MaxImageWidth { get; set; } = 180;
 
         public double MaxImageHeight { get; set; } = 120;
+
+        public int MaxEmbeddedClipboardImageBytes { get; set; } = 4 * 1024 * 1024;
 
         public Func<IDataObject, bool> CanImportDataObject { get; set; }
 
@@ -1378,6 +1392,11 @@ namespace AvaloniaEdit.RichTextInput
 
         public RichTextInputSnapshot CreateSnapshot(ISegment segment = null, bool removeObjectReplacementCharacters = false)
         {
+            return CreateSnapshot(segment, removeObjectReplacementCharacters, false);
+        }
+
+        private RichTextInputSnapshot CreateSnapshot(ISegment segment, bool removeObjectReplacementCharacters, bool includeImageData)
+        {
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             segment ??= new SimpleSegment(0, document.TextLength);
             var text = document.GetText(segment);
@@ -1386,14 +1405,7 @@ namespace AvaloniaEdit.RichTextInput
             for (var i = 0; i < rangeItems.Count; i++)
             {
                 var item = rangeItems[i];
-                items[i] = new RichTextInputSnapshotItem
-                {
-                    Offset = item.Offset - segment.Offset,
-                    Kind = item.Content.Kind,
-                    DisplayText = item.Content.DisplayText,
-                    Source = item.Content.Source,
-                    StyleKey = item.Content.StyleKey
-                };
+                items[i] = CreateSnapshotItem(item, item.Offset - segment.Offset, includeImageData);
             }
 
             if (!removeObjectReplacementCharacters)
@@ -1415,6 +1427,33 @@ namespace AvaloniaEdit.RichTextInput
             }
 
             return new RichTextInputSnapshot(adjusted, items);
+        }
+
+        private RichTextInputSnapshotItem CreateSnapshotItem(RichTextContentItem item, int offset, bool includeImageData)
+        {
+            var snapshotItem = new RichTextInputSnapshotItem
+            {
+                Offset = offset,
+                Kind = item.Content.Kind,
+                DisplayText = item.Content.DisplayText,
+                Source = item.Content.Source,
+                StyleKey = item.Content.StyleKey,
+                LiveContentKey = includeImageData ? RegisterLiveClipboardContent(item.Content) : null
+            };
+
+            if (includeImageData
+                && item.Content.Kind == RichTextContentKind.Image
+                && item.Content.Value is Bitmap bitmap
+                && !HasReadableImageSource(item.Content.Source))
+            {
+                if (TryEncodeBitmap(bitmap, MaxEmbeddedClipboardImageBytes, out var imageData, out var imageMimeType))
+                {
+                    snapshotItem.ImageMimeType = imageMimeType;
+                    snapshotItem.ImageData = imageData;
+                }
+            }
+
+            return snapshotItem;
         }
 
         public string SerializeSnapshot(ISegment segment = null)
@@ -1637,7 +1676,7 @@ namespace AvaloniaEdit.RichTextInput
             if (segment == null)
                 return false;
 
-            var snapshot = CreateSnapshot(segment);
+            var snapshot = CreateSnapshot(segment, false, true);
             if (snapshot.Items.Count == 0)
                 return false;
 
@@ -1690,7 +1729,310 @@ namespace AvaloniaEdit.RichTextInput
 
         private static RichTextContent CreateContentFromSnapshotItem(RichTextInputSnapshotItem snapshotItem)
         {
+            if (TryGetLiveClipboardContent(snapshotItem.LiveContentKey, out var liveContent))
+                return liveContent;
+
+            if (snapshotItem.Kind == RichTextContentKind.Image)
+            {
+                var bitmap = TryCreateBitmapFromSnapshotItem(snapshotItem);
+                if (bitmap != null)
+                    return RichTextContent.FromImage(bitmap, snapshotItem.DisplayText, snapshotItem.Source);
+            }
+
             return new RichTextContent(snapshotItem.Kind, snapshotItem.DisplayText, null, snapshotItem.Source, snapshotItem.StyleKey);
+        }
+
+        private static string RegisterLiveClipboardContent(RichTextContent content)
+        {
+            if (content == null)
+                return null;
+
+            var key = Guid.NewGuid().ToString("N");
+            lock (LiveClipboardContentCacheLock)
+            {
+                LiveClipboardContentCache[key] = content;
+                LiveClipboardContentCacheOrder.Enqueue(key);
+                while (LiveClipboardContentCacheOrder.Count > MaxLiveClipboardContentCacheSize)
+                    LiveClipboardContentCache.Remove(LiveClipboardContentCacheOrder.Dequeue());
+            }
+
+            return key;
+        }
+
+        private static bool TryGetLiveClipboardContent(string key, out RichTextContent content)
+        {
+            content = null;
+            if (string.IsNullOrEmpty(key))
+                return false;
+
+            lock (LiveClipboardContentCacheLock)
+                return LiveClipboardContentCache.TryGetValue(key, out content);
+        }
+
+        internal static void ClearLiveClipboardContentCache()
+        {
+            lock (LiveClipboardContentCacheLock)
+            {
+                LiveClipboardContentCache.Clear();
+                LiveClipboardContentCacheOrder.Clear();
+            }
+        }
+
+        private static Bitmap TryCreateBitmapFromSnapshotItem(RichTextInputSnapshotItem snapshotItem)
+        {
+            var localPath = TryGetLocalFilePath(snapshotItem.Source);
+            if (!string.IsNullOrEmpty(localPath) && File.Exists(localPath))
+            {
+                try
+                {
+                    return new Bitmap(localPath);
+                }
+                catch
+                {
+                }
+            }
+
+            if (string.IsNullOrEmpty(snapshotItem.ImageData))
+                return null;
+
+            try
+            {
+                var bytes = Convert.FromBase64String(snapshotItem.ImageData);
+                using (var stream = new MemoryStream(bytes))
+                    return new Bitmap(stream);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool TryEncodeBitmap(Bitmap bitmap, int maxBytes, out string imageData, out string imageMimeType)
+        {
+            imageData = null;
+            imageMimeType = null;
+            if (bitmap == null || maxBytes <= 0)
+                return false;
+
+            try
+            {
+                using (var stream = new MemoryStream())
+                {
+                    bitmap.Save(stream);
+                    var bytes = stream.ToArray();
+                    if (bytes.Length > 0
+                        && bytes.Length <= maxBytes
+                        && CanDecodeBitmapBytes(bytes))
+                    {
+                        imageData = Convert.ToBase64String(bytes);
+                        imageMimeType = "image/png";
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            if (TrySaveBitmapToTemporaryPng(bitmap, maxBytes, out var pngBytes))
+            {
+                imageData = Convert.ToBase64String(pngBytes);
+                imageMimeType = "image/png";
+                return true;
+            }
+
+            if (TryRenderBitmapToPng(bitmap, maxBytes, out var renderedPngBytes))
+            {
+                imageData = Convert.ToBase64String(renderedPngBytes);
+                imageMimeType = "image/png";
+                return true;
+            }
+
+            try
+            {
+                var bytes = CreateBmpBytesFromBitmap(bitmap);
+                if (bytes.Length <= 0 || bytes.Length > maxBytes)
+                    return false;
+
+                imageData = Convert.ToBase64String(bytes);
+                imageMimeType = "image/bmp";
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryRenderBitmapToPng(Bitmap bitmap, int maxBytes, out byte[] bytes)
+        {
+            bytes = null;
+            try
+            {
+                using (var renderTarget = new RenderTargetBitmap(bitmap.PixelSize, bitmap.Dpi))
+                {
+                    using (var context = renderTarget.CreateDrawingContext())
+                    {
+                        var rect = new Rect(bitmap.Size);
+                        context.DrawImage(bitmap, rect, rect);
+                    }
+
+                    using (var stream = new MemoryStream())
+                    {
+                        renderTarget.Save(stream);
+                        bytes = stream.ToArray();
+                    }
+
+                    if (bytes.Length > 0
+                        && bytes.Length <= maxBytes
+                        && CanDecodeBitmapBytes(bytes))
+                    {
+                        return true;
+                    }
+
+                    return TrySaveBitmapToTemporaryPng(renderTarget, maxBytes, out bytes);
+                }
+            }
+            catch
+            {
+                bytes = null;
+                return false;
+            }
+        }
+
+        private static bool TrySaveBitmapToTemporaryPng(Bitmap bitmap, int maxBytes, out byte[] bytes)
+        {
+            bytes = null;
+            var fileName = Path.Combine(Path.GetTempPath(), "AvaloniaEdit.RichTextInput." + Guid.NewGuid().ToString("N") + ".png");
+            try
+            {
+                bitmap.Save(fileName);
+                bytes = File.ReadAllBytes(fileName);
+                return bytes.Length > 0
+                    && bytes.Length <= maxBytes
+                    && CanDecodeBitmapBytes(bytes);
+            }
+            catch
+            {
+                bytes = null;
+                return false;
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(fileName))
+                        File.Delete(fileName);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static bool CanDecodeBitmapBytes(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0)
+                return false;
+
+            try
+            {
+                using (var stream = new MemoryStream(bytes))
+                using (var decoded = new Bitmap(stream))
+                    return decoded.PixelSize.Width > 0 && decoded.PixelSize.Height > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static byte[] CreateBmpBytesFromBitmap(Bitmap bitmap)
+        {
+            var width = bitmap.PixelSize.Width;
+            var height = bitmap.PixelSize.Height;
+            if (width <= 0 || height <= 0)
+                return Array.Empty<byte>();
+
+            var rowBytes = checked(width * 4);
+            var pixelBytes = checked(rowBytes * height);
+            var pointer = Marshal.AllocHGlobal(pixelBytes);
+            try
+            {
+                CopyBitmapPixelsToBgra8888(bitmap, pointer, pixelBytes, rowBytes);
+
+                var fileSize = 14 + 40 + pixelBytes;
+                var bytes = new byte[fileSize];
+                bytes[0] = (byte)'B';
+                bytes[1] = (byte)'M';
+                BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(2, 4), fileSize);
+                BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(10, 4), 54);
+                BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(14, 4), 40);
+                BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(18, 4), width);
+                BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(22, 4), -height);
+                BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(26, 2), 1);
+                BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(28, 2), 32);
+                BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(34, 4), pixelBytes);
+                Marshal.Copy(pointer, bytes, 54, pixelBytes);
+                return bytes;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pointer);
+            }
+        }
+
+        private static void CopyBitmapPixelsToBgra8888(Bitmap bitmap, IntPtr pointer, int pixelBytes, int rowBytes)
+        {
+            using (var framebuffer = new MemoryLockedFramebuffer(
+                pointer,
+                bitmap.PixelSize,
+                rowBytes,
+                bitmap.Dpi,
+                PixelFormat.Bgra8888,
+                AlphaFormat.Premul))
+            {
+                if (TryCopyPixelsWithFramebuffer(bitmap, framebuffer))
+                    return;
+            }
+
+            bitmap.CopyPixels(new PixelRect(bitmap.PixelSize), pointer, pixelBytes, rowBytes);
+        }
+
+        private static bool TryCopyPixelsWithFramebuffer(Bitmap bitmap, ILockedFramebuffer framebuffer)
+        {
+            var method = typeof(Bitmap).GetMethod(
+                nameof(Bitmap.CopyPixels),
+                new[] { typeof(ILockedFramebuffer), typeof(AlphaFormat) });
+            if (method == null)
+                return false;
+
+            try
+            {
+                method.Invoke(bitmap, new object[] { framebuffer, AlphaFormat.Premul });
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool HasReadableImageSource(string source)
+        {
+            var localPath = TryGetLocalFilePath(source);
+            return !string.IsNullOrEmpty(localPath) && File.Exists(localPath);
+        }
+
+        private static string TryGetLocalFilePath(string source)
+        {
+            if (string.IsNullOrWhiteSpace(source))
+                return null;
+
+            if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && uri.IsFile)
+                return uri.LocalPath;
+
+            return source;
         }
 
         private static string SerializeSnapshot(RichTextInputSnapshot snapshot)
@@ -1709,6 +2051,12 @@ namespace AvaloniaEdit.RichTextInput
                 builder.Append(Encode(item.Source));
                 builder.Append('|');
                 builder.Append(Encode(item.StyleKey));
+                builder.Append('|');
+                builder.Append(Encode(item.LiveContentKey));
+                builder.Append('|');
+                builder.Append(Encode(item.ImageMimeType));
+                builder.Append('|');
+                builder.Append(Encode(item.ImageData));
                 builder.AppendLine();
             }
 
@@ -1732,7 +2080,7 @@ namespace AvaloniaEdit.RichTextInput
                     continue;
 
                 var parts = lines[i].Split('|');
-                if ((parts.Length != 4 && parts.Length != 5)
+                if ((parts.Length < 4 || parts.Length > 8)
                     || !int.TryParse(parts[0], out var itemOffset)
                     || !int.TryParse(parts[1], out var kind))
                     return false;
@@ -1743,7 +2091,10 @@ namespace AvaloniaEdit.RichTextInput
                     Kind = (RichTextContentKind)kind,
                     DisplayText = Decode(parts[2]),
                     Source = Decode(parts[3]),
-                    StyleKey = parts.Length > 4 ? Decode(parts[4]) : null
+                    StyleKey = parts.Length > 4 ? Decode(parts[4]) : null,
+                    LiveContentKey = parts.Length > 5 ? Decode(parts[5]) : null,
+                    ImageMimeType = parts.Length > 6 ? Decode(parts[6]) : null,
+                    ImageData = parts.Length > 7 ? Decode(parts[7]) : null
                 });
             }
 
@@ -2796,6 +3147,41 @@ namespace AvaloniaEdit.RichTextInput
 
             [DllImport(ObjectiveCLibrary, EntryPoint = "objc_msgSend")]
             private static extern UIntPtr UIntPtr_objc_msgSend(IntPtr receiver, IntPtr selector);
+        }
+
+        private sealed class MemoryLockedFramebuffer : ILockedFramebuffer
+        {
+            public MemoryLockedFramebuffer(
+                IntPtr address,
+                PixelSize size,
+                int rowBytes,
+                Vector dpi,
+                PixelFormat format,
+                AlphaFormat alphaFormat)
+            {
+                Address = address;
+                Size = size;
+                RowBytes = rowBytes;
+                Dpi = dpi;
+                Format = format;
+                AlphaFormat = alphaFormat;
+            }
+
+            public IntPtr Address { get; }
+
+            public PixelSize Size { get; }
+
+            public int RowBytes { get; }
+
+            public Vector Dpi { get; }
+
+            public PixelFormat Format { get; }
+
+            public AlphaFormat AlphaFormat { get; }
+
+            public void Dispose()
+            {
+            }
         }
 
         private sealed class RichTextContentUndoOperation : IUndoableOperation
