@@ -80,8 +80,8 @@ namespace AvaloniaEdit.Editing
 
             TextInputMethodClientRequestedEvent.AddClassHandler<TextArea>((ta, e) =>
             {
-                // Only handle IME for the TextArea itself, not for child controls (e.g. search TextBox)
-                if (!ta.IsReadOnly && e.Source == ta)
+                // Only handle IME for the editor surface itself, not arbitrary child controls.
+                if (!ta.IsReadOnly && ta.IsTextInputMethodSource(e.Source))
                 {
                     e.Client = ta._imClient;
                 }
@@ -157,6 +157,11 @@ namespace AvaloniaEdit.Editing
         internal void RemoveChild(Visual visual)
         {
             VisualChildren.Remove(visual);
+        }
+
+        private bool IsTextInputMethodSource(object source)
+        {
+            return ReferenceEquals(source, this) || ReferenceEquals(source, TextView);
         }
 
         #endregion
@@ -1259,29 +1264,18 @@ namespace AvaloniaEdit.Editing
             {
                 get
                 {
-                    if (_textArea == null)
+                    if (_textArea?.TextView == null)
                     {
                         return default;
                     }
 
-                    var transform = _textArea.TextView.TransformToVisual(_textArea);
-
-                    if (transform == null)
-                    {
-                        return default;
-                    }
-
-                    var rect = _textArea.Caret.CalculateCaretRectangle().TransformToAABB(transform.Value);
-
+                    var rect = _textArea.Caret.CalculateCaretRectangle();
                     var scrollOffset = _textArea.TextView.ScrollOffset;
-
-                    rect = rect.WithX(rect.X - scrollOffset.X).WithY(rect.Y - scrollOffset.Y);
-
-                    return rect;
+                    return rect.WithX(rect.X - scrollOffset.X).WithY(rect.Y - scrollOffset.Y);
                 }
             }
 
-            public override Visual TextViewVisual => _textArea;
+            public override Visual TextViewVisual => _textArea?.TextView;
 
             public override bool SupportsPreedit => true;
 

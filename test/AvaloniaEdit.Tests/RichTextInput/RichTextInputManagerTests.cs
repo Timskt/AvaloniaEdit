@@ -106,6 +106,24 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void PlainTypingInLargeRichDocumentDoesNotValidateEveryRichItem()
+        {
+            var textArea = CreateTextArea("start end");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.InsertContents(6, Enumerable.Range(0, 500)
+                .Select(i => RichTextContent.FromCustom($"card-{i}", i)));
+            var validationPasses = manager.InvalidItemValidationPassCount;
+
+            for (var i = 0; i < 50; i++)
+                textArea.Document.Insert(0, "x");
+
+            Assert.AreEqual(validationPasses, manager.InvalidItemValidationPassCount);
+            Assert.AreEqual(500, manager.Items.Count);
+            Assert.IsTrue(manager.Items.All(item =>
+                textArea.Document.GetCharAt(item.Offset) == RichTextInputManager.ObjectReplacementCharacter));
+        }
+
+        [AvaloniaTest]
         public async Task InsertDataAsyncRestoresSerializedRichTextSnapshot()
         {
             var sourceTextArea = CreateTextArea("hi ");
@@ -158,11 +176,37 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public async Task InsertDataAsyncAddsBitmapContentFromMacClassicBitmapClipboardData()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var dataObject = new DataObject();
+            dataObject.Set("BMP ", CreateSinglePixelBmp32());
+
+            var inserted = await manager.InsertDataAsync(dataObject, 1, false);
+
+            Assert.IsTrue(inserted);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
+            Assert.AreEqual(1, manager.Items.Count);
+            Assert.AreEqual(RichTextContentKind.Image, manager.Items[0].Content.Kind);
+        }
+
+        [AvaloniaTest]
         public void CanInsertDefaultDataRecognizesWindowsDibClipboardData()
         {
             var manager = RichTextInputManager.Install(CreateTextArea(""));
             var dataObject = new DataObject();
             dataObject.Set("CF_DIB", CreateSinglePixelDib32());
+
+            Assert.IsTrue(manager.CanInsertDefaultData(dataObject));
+        }
+
+        [AvaloniaTest]
+        public void CanInsertDefaultDataRecognizesMacClassicBitmapClipboardData()
+        {
+            var manager = RichTextInputManager.Install(CreateTextArea(""));
+            var dataObject = new DataObject();
+            dataObject.Set("BMP ", CreateSinglePixelBmp32());
 
             Assert.IsTrue(manager.CanInsertDefaultData(dataObject));
         }
@@ -661,6 +705,15 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void ImeClientUsesTextViewVisualForCandidateCoordinates()
+        {
+            var textArea = CreateTextArea("ab");
+            var client = GetImeClient(textArea);
+
+            Assert.AreSame(textArea.TextView, client.TextViewVisual);
+        }
+
+        [AvaloniaTest]
         public void InlineImePreeditOccupiesLayoutBeforeRichContentWithoutChangingDocument()
         {
             var textArea = CreateTextArea("ab");
@@ -896,12 +949,17 @@ namespace AvaloniaEdit.Tests.RichTextInput
 
         private static void SetPreeditText(TextArea textArea, string text, int? cursorOffset = null)
         {
-            var field = typeof(TextArea).GetField("_imClient", BindingFlags.Instance | BindingFlags.NonPublic);
-            var client = (TextInputMethodClient)field.GetValue(textArea);
+            var client = GetImeClient(textArea);
             if (cursorOffset.HasValue)
                 client.GetType().GetMethod("SetPreeditText", new[] { typeof(string), typeof(int?) }).Invoke(client, new object[] { text, cursorOffset });
             else
                 client.SetPreeditText(text);
+        }
+
+        private static TextInputMethodClient GetImeClient(TextArea textArea)
+        {
+            var field = typeof(TextArea).GetField("_imClient", BindingFlags.Instance | BindingFlags.NonPublic);
+            return (TextInputMethodClient)field.GetValue(textArea);
         }
 
         private static byte[] CreateSinglePixelDib32()
@@ -917,6 +975,18 @@ namespace AvaloniaEdit.Tests.RichTextInput
             bytes[41] = 0;
             bytes[42] = 0;
             bytes[43] = 0xff;
+            return bytes;
+        }
+
+        private static byte[] CreateSinglePixelBmp32()
+        {
+            var dib = CreateSinglePixelDib32();
+            var bytes = new byte[14 + dib.Length];
+            bytes[0] = (byte)'B';
+            bytes[1] = (byte)'M';
+            WriteInt32(bytes, 2, bytes.Length);
+            WriteInt32(bytes, 10, 14 + 40);
+            Buffer.BlockCopy(dib, 0, bytes, 14, dib.Length);
             return bytes;
         }
 
