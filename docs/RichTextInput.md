@@ -516,7 +516,7 @@ richInput.DropHandler = context =>
 };
 ```
 
-Ava11/Ava12 都会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`、`Format17`。Ava11 从 `IDataObject` 读取，Ava12 从 `IDataTransfer/IAsyncDataTransfer` 的平台字节格式读取。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
+Ava11/Ava12 都会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`、`Format17`；也识别 macOS pasteboard 常见图片格式，例如 `TIFF picture`、`PNGf`、`JPEG picture`、`GIF picture`、`BMP `、`TPIC`、`jp2 `、`8BPS`、`AVIF`。Ava11 从 `IDataObject` 读取，Ava12 从 `IDataTransfer/IAsyncDataTransfer` 的平台字节格式读取。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
 
 ### 批量插入
 
@@ -533,6 +533,17 @@ richInput.InsertContents(new[]
 richInput.InsertContents(editor.TextArea.Caret.Offset, files.Select(file =>
     RichTextContent.FromFile(file)));
 ```
+
+### 长文档持续输入
+
+富输入可以用于较长的消息草稿、笔记或带图片/卡片的文档。普通文本输入、IME 确认文本、在文本区回车或删除普通文本时，管理器不会每次都全量扫描所有图片和自定义组件；富内容锚点由 `AnchorSegment` 跟随文档移动，只有删除范围真的覆盖富内容占位符时才处理对应项。
+
+几个使用建议：
+
+- 批量导入图片、附件、业务卡片时使用 `InsertContents`，避免逐项插入触发多次布局。
+- 持续输入时直接使用 `TextArea.Document` 或普通输入流程即可，不需要业务层手动刷新富内容列表。
+- 需要发送、保存、复制或展示时再调用 `GetValue()`、`GetSnapshot()`、`GetItemsInDocumentOrder()` 等 API，这些读取类 API 会做一次一致性清理，适合放在用户动作边界上。
+- 大文档展示框和发送框宽度不一致时，继续用 `GetValue/SetValue` 复用数据；目标控件会按自己的宽度重新布局图片和自定义组件。
 
 ### 多选文件逐项处理
 

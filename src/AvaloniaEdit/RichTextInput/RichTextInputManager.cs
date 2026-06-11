@@ -640,9 +640,31 @@ namespace AvaloniaEdit.RichTextInput
             "JFIF",
             "JPEG",
             "TIFF",
+            "BMP",
+            "GIF",
+            "jp2",
+            "JPEG 2000",
+            "TIFF picture",
+            "PNGf",
+            "JPEG picture",
+            "GIF picture",
+            "BMP ",
+            "TPIC",
+            "jp2 ",
+            "8BPS",
+            "AVIF",
             "public.png",
             "public.jpeg",
             "public.tiff",
+            "public.gif",
+            "public.bmp",
+            "public.heic",
+            "public.heif",
+            "public.avif",
+            "public.jpeg-2000",
+            "com.compuserve.gif",
+            "com.microsoft.bmp",
+            "com.adobe.photoshop-image",
             "System.Drawing.Bitmap",
             "DeviceIndependentBitmap",
             "CF_DIB",
@@ -662,6 +684,7 @@ namespace AvaloniaEdit.RichTextInput
         private readonly Dictionary<string, Func<RichTextElementFactoryContext, Control>> _elementFactories =
             new Dictionary<string, Func<RichTextElementFactoryContext, Control>>(StringComparer.Ordinal);
         private RichTextContentItem[] _orderedItemsCache;
+        private bool _richContentChangedDuringDocumentChange;
         private int _deferRedrawCount;
         private int _suspendInvalidItemValidationCount;
         private bool _redrawPending;
@@ -688,6 +711,8 @@ namespace AvaloniaEdit.RichTextInput
         public IReadOnlyList<RichTextContentItem> Items => _items;
 
         public TextArea TextArea => _textArea;
+
+        internal int InvalidItemValidationPassCount { get; private set; }
 
         public bool ConvertImageFilesToImages { get; set; }
 
@@ -2250,12 +2275,12 @@ namespace AvaloniaEdit.RichTextInput
 
         private void Document_Changing(object sender, DocumentChangeEventArgs e)
         {
+            _richContentChangedDuringDocumentChange = false;
             if (e.RemovalLength == 0 || _items.Count == 0)
                 return;
 
             var document = _textArea.Document;
             var removedItems = GetItemsInRange(e.Offset, e.Offset + e.RemovalLength)
-                .OrderBy(item => item.Offset)
                 .ToArray();
             var reanchorOffsets = GetReanchorOffsets(e, removedItems.Length);
             for (var i = 0; i < removedItems.Length; i++)
@@ -2263,11 +2288,14 @@ namespace AvaloniaEdit.RichTextInput
                 var item = removedItems[i];
                 if (i < reanchorOffsets.Count && _items.Remove(item))
                 {
+                    _richContentChangedDuringDocumentChange = true;
+                    InvalidateItemsCache();
                     _pendingReanchors.Add(new PendingRichContentReanchor(item.Content, e.Offset + reanchorOffsets[i]));
                     continue;
                 }
 
                 RemoveItem(item);
+                _richContentChangedDuringDocumentChange = true;
                 if (document?.UndoStack.AcceptChanges == true)
                     document.UndoStack.Push(new RichTextContentUndoOperation(this, item.Content, item.Offset, false, item));
             }
@@ -2279,13 +2307,15 @@ namespace AvaloniaEdit.RichTextInput
             var reanchored = ApplyPendingReanchors();
             if (IsInvalidItemValidationSuspended())
             {
-                if (reanchored || ShouldRebuildRichContentVisuals(e))
+                if (_richContentChangedDuringDocumentChange || reanchored || ShouldRebuildRichContentVisuals(e))
                     RequestRedraw();
+                _richContentChangedDuringDocumentChange = false;
                 return;
             }
 
-            if (RemoveInvalidItems() || reanchored || ShouldRebuildRichContentVisuals(e))
+            if (_richContentChangedDuringDocumentChange || reanchored || ShouldRebuildRichContentVisuals(e))
                 RequestRedraw();
+            _richContentChangedDuringDocumentChange = false;
         }
 
         private IReadOnlyList<int> GetReanchorOffsets(DocumentChangeEventArgs e, int removedItemCount)
@@ -2355,6 +2385,7 @@ namespace AvaloniaEdit.RichTextInput
 
         private bool RemoveInvalidItems()
         {
+            InvalidItemValidationPassCount++;
             var document = _textArea.Document;
             if (document == null || _items.Count == 0)
                 return false;
@@ -2379,9 +2410,19 @@ namespace AvaloniaEdit.RichTextInput
 
         private IReadOnlyList<RichTextContentItem> GetItemsInRange(int startOffset, int endOffset)
         {
-            return _items
-                .Where(item => item.Offset >= startOffset && item.Offset < endOffset)
-                .ToArray();
+            if (startOffset >= endOffset || _items.Count == 0)
+                return Array.Empty<RichTextContentItem>();
+
+            var items = GetOrderedItemsCache();
+            var index = FindItemIndexAtOrAfter(startOffset);
+            if (index < 0 || index >= items.Length)
+                return Array.Empty<RichTextContentItem>();
+
+            var result = new List<RichTextContentItem>();
+            for (var i = index; i < items.Length && items[i].Offset < endOffset; i++)
+                result.Add(items[i]);
+
+            return result;
         }
 
         private IReadOnlyList<SelectionSegment> GetOrderedSelectionSegments()
