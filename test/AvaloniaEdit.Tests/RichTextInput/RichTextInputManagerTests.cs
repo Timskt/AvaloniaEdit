@@ -70,6 +70,42 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void InsertContentsAddsMultipleRichItemsInDocumentOrder()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            textArea.Caret.Offset = 1;
+
+            var items = manager.InsertContents(new[]
+            {
+                RichTextContent.FromCustom("one", 1),
+                RichTextContent.FromCustom("two", 2),
+                RichTextContent.FromCustom("three", 3)
+            });
+
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + RichTextInputManager.ObjectReplacementString + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
+            Assert.AreEqual(3, items.Count);
+            Assert.AreEqual(3, manager.Items.Count);
+            Assert.AreEqual(new[] { "one", "two", "three" }, manager.GetItemsInDocumentOrder().Select(item => item.Content.DisplayText).ToArray());
+            Assert.AreEqual(4, textArea.Caret.Offset);
+        }
+
+        [AvaloniaTest]
+        public void TryGetItemUsesUpdatedOffsetsAfterBulkInsert()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.InsertContent(1, RichTextContent.FromCustom("old", 0));
+
+            manager.InsertContents(0, Enumerable.Range(1, 3).Select(i => RichTextContent.FromCustom($"new-{i}", i)));
+
+            Assert.IsTrue(manager.TryGetItem(4, out var oldItem));
+            Assert.AreEqual("old", oldItem.Content.DisplayText);
+            Assert.AreEqual(0, manager.GetFirstInterestedOffset(0));
+            Assert.AreEqual(4, manager.GetFirstInterestedOffset(3));
+        }
+
+        [AvaloniaTest]
         public async Task InsertDataAsyncRestoresSerializedRichTextSnapshot()
         {
             var sourceTextArea = CreateTextArea("hi ");
@@ -103,6 +139,32 @@ namespace AvaloniaEdit.Tests.RichTextInput
             Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
             Assert.AreEqual(1, manager.Items.Count);
             Assert.AreEqual(RichTextContentKind.Image, manager.Items[0].Content.Kind);
+        }
+
+        [AvaloniaTest]
+        public async Task InsertDataAsyncAddsBitmapContentFromWindowsDibClipboardData()
+        {
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var dataObject = new DataObject();
+            dataObject.Set("CF_DIB", CreateSinglePixelDib32());
+
+            var inserted = await manager.InsertDataAsync(dataObject, 1, false);
+
+            Assert.IsTrue(inserted);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
+            Assert.AreEqual(1, manager.Items.Count);
+            Assert.AreEqual(RichTextContentKind.Image, manager.Items[0].Content.Kind);
+        }
+
+        [AvaloniaTest]
+        public void CanInsertDefaultDataRecognizesWindowsDibClipboardData()
+        {
+            var manager = RichTextInputManager.Install(CreateTextArea(""));
+            var dataObject = new DataObject();
+            dataObject.Set("CF_DIB", CreateSinglePixelDib32());
+
+            Assert.IsTrue(manager.CanInsertDefaultData(dataObject));
         }
 
         [AvaloniaTest]
@@ -840,6 +902,36 @@ namespace AvaloniaEdit.Tests.RichTextInput
                 client.GetType().GetMethod("SetPreeditText", new[] { typeof(string), typeof(int?) }).Invoke(client, new object[] { text, cursorOffset });
             else
                 client.SetPreeditText(text);
+        }
+
+        private static byte[] CreateSinglePixelDib32()
+        {
+            var bytes = new byte[44];
+            WriteInt32(bytes, 0, 40);
+            WriteInt32(bytes, 4, 1);
+            WriteInt32(bytes, 8, 1);
+            WriteUInt16(bytes, 12, 1);
+            WriteUInt16(bytes, 14, 32);
+            WriteInt32(bytes, 20, 4);
+            bytes[40] = 0xff;
+            bytes[41] = 0;
+            bytes[42] = 0;
+            bytes[43] = 0xff;
+            return bytes;
+        }
+
+        private static void WriteInt32(byte[] bytes, int offset, int value)
+        {
+            bytes[offset] = (byte)value;
+            bytes[offset + 1] = (byte)(value >> 8);
+            bytes[offset + 2] = (byte)(value >> 16);
+            bytes[offset + 3] = (byte)(value >> 24);
+        }
+
+        private static void WriteUInt16(byte[] bytes, int offset, ushort value)
+        {
+            bytes[offset] = (byte)value;
+            bytes[offset + 1] = (byte)(value >> 8);
         }
     }
 }

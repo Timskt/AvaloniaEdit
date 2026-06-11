@@ -582,9 +582,7 @@ namespace AvaloniaEdit.Demo
 
         private Task RichTextInputManager_PasteHandler(RichTextPasteContext context)
         {
-            if (context.DataObject.Contains(RichTextInputManager.RichTextClipboardFormat)
-                || context.DataObject.Contains(DataFormats.Files)
-                || context.DataObject.Contains(DataFormats.FileNames))
+            if (_richTextInputManager.CanInsertDefaultData(context.DataObject))
             {
                 context.UseDefault();
                 return Task.CompletedTask;
