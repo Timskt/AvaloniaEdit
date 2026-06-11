@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -244,6 +245,27 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public async Task InsertDataAsyncAddsBitmapContentFromMacTiffDataTransfer()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                Assert.Ignore("macOS AppKit image conversion is only available on macOS.");
+
+            var textArea = CreateTextArea("ab");
+            var manager = RichTextInputManager.Install(textArea);
+            var dataTransfer = new DataTransfer();
+            var item = new DataTransferItem();
+            item.Set(DataFormat.CreateBytesPlatformFormat("public.tiff"), CreateSinglePixelTiffRgb());
+            dataTransfer.Add(item);
+
+            var inserted = await manager.InsertDataAsync((IDataTransfer)dataTransfer, 1, false);
+
+            Assert.IsTrue(inserted);
+            Assert.AreEqual("a" + RichTextInputManager.ObjectReplacementString + "b", textArea.Document.Text);
+            Assert.AreEqual(1, manager.Items.Count);
+            Assert.AreEqual(RichTextContentKind.Image, manager.Items[0].Content.Kind);
+        }
+
+        [AvaloniaTest]
         public void CanInsertRecognizesWindowsDibDataTransfer()
         {
             var manager = RichTextInputManager.Install(CreateTextArea(""));
@@ -263,6 +285,19 @@ namespace AvaloniaEdit.Tests.RichTextInput
             var dataTransfer = new DataTransfer();
             var item = new DataTransferItem();
             item.Set(DataFormat.CreateBytesPlatformFormat("BMP "), CreateSinglePixelBmp32());
+            dataTransfer.Add(item);
+
+            Assert.IsTrue(manager.CanInsert((IDataTransfer)dataTransfer));
+            Assert.IsTrue(manager.CanInsert((IAsyncDataTransfer)dataTransfer));
+        }
+
+        [AvaloniaTest]
+        public void CanInsertRecognizesMacLegacyTiffDataTransfer()
+        {
+            var manager = RichTextInputManager.Install(CreateTextArea(""));
+            var dataTransfer = new DataTransfer();
+            var item = new DataTransferItem();
+            item.Set(DataFormat.CreateBytesPlatformFormat("NeXT TIFF v4.0 pasteboard type"), CreateSinglePixelTiffRgb());
             dataTransfer.Add(item);
 
             Assert.IsTrue(manager.CanInsert((IDataTransfer)dataTransfer));
@@ -948,6 +983,10 @@ namespace AvaloniaEdit.Tests.RichTextInput
             var manager = RichTextInputManager.Install(textArea);
             manager.PasteHandler = context =>
             {
+                Assert.IsTrue(context.ContainsFormat(DataFormat.Text));
+                Assert.IsTrue(context.ContainsFormat(DataFormat.Text.Identifier));
+                Assert.IsTrue(context.Formats.Any(format =>
+                    string.Equals(format.Identifier, DataFormat.Text.Identifier, StringComparison.OrdinalIgnoreCase)));
                 context.InsertContents(new[] { RichTextContent.FromCustom("paste-card", 42, "paste-card") });
                 return Task.CompletedTask;
             };
@@ -968,6 +1007,10 @@ namespace AvaloniaEdit.Tests.RichTextInput
             var manager = RichTextInputManager.Install(textArea);
             manager.DropHandler = context =>
             {
+                Assert.IsTrue(context.ContainsFormat(DataFormat.Text));
+                Assert.IsTrue(context.ContainsFormat(DataFormat.Text.Identifier));
+                Assert.IsTrue(context.Formats.Any(format =>
+                    string.Equals(format.Identifier, DataFormat.Text.Identifier, StringComparison.OrdinalIgnoreCase)));
                 context.InsertContents(new[] { RichTextContent.FromCustom("drop-card", 99, "drop-card") });
                 return Task.CompletedTask;
             };
@@ -1092,6 +1135,57 @@ namespace AvaloniaEdit.Tests.RichTextInput
             WriteInt32(bytes, 10, 14 + 40);
             Buffer.BlockCopy(dib, 0, bytes, 14, dib.Length);
             return bytes;
+        }
+
+        private static byte[] CreateSinglePixelTiffRgb()
+        {
+            const int ifdOffset = 8;
+            const int entryCount = 10;
+            const int bitsPerSampleOffset = ifdOffset + 2 + (entryCount * 12) + 4;
+            const int pixelOffset = bitsPerSampleOffset + 6;
+            var bytes = new byte[pixelOffset + 3];
+            bytes[0] = (byte)'I';
+            bytes[1] = (byte)'I';
+            WriteUInt16(bytes, 2, 42);
+            WriteInt32(bytes, 4, ifdOffset);
+            WriteUInt16(bytes, ifdOffset, entryCount);
+
+            var entryOffset = ifdOffset + 2;
+            WriteTiffEntry(bytes, ref entryOffset, 256, 4, 1, 1);
+            WriteTiffEntry(bytes, ref entryOffset, 257, 4, 1, 1);
+            WriteTiffEntry(bytes, ref entryOffset, 258, 3, 3, bitsPerSampleOffset);
+            WriteTiffEntry(bytes, ref entryOffset, 259, 3, 1, 1);
+            WriteTiffEntry(bytes, ref entryOffset, 262, 3, 1, 2);
+            WriteTiffEntry(bytes, ref entryOffset, 273, 4, 1, pixelOffset);
+            WriteTiffEntry(bytes, ref entryOffset, 277, 3, 1, 3);
+            WriteTiffEntry(bytes, ref entryOffset, 278, 4, 1, 1);
+            WriteTiffEntry(bytes, ref entryOffset, 279, 4, 1, 3);
+            WriteTiffEntry(bytes, ref entryOffset, 284, 3, 1, 1);
+            WriteInt32(bytes, entryOffset, 0);
+
+            WriteUInt16(bytes, bitsPerSampleOffset, 8);
+            WriteUInt16(bytes, bitsPerSampleOffset + 2, 8);
+            WriteUInt16(bytes, bitsPerSampleOffset + 4, 8);
+            bytes[pixelOffset] = 0xff;
+            return bytes;
+        }
+
+        private static void WriteTiffEntry(byte[] bytes, ref int offset, ushort tag, ushort type, int count, int value)
+        {
+            WriteUInt16(bytes, offset, tag);
+            WriteUInt16(bytes, offset + 2, type);
+            WriteInt32(bytes, offset + 4, count);
+            if (type == 3 && count == 1)
+            {
+                WriteUInt16(bytes, offset + 8, (ushort)value);
+                WriteUInt16(bytes, offset + 10, 0);
+            }
+            else
+            {
+                WriteInt32(bytes, offset + 8, value);
+            }
+
+            offset += 12;
         }
 
         private static void WriteInt32(byte[] bytes, int offset, int value)

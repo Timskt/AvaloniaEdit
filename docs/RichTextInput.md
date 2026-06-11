@@ -449,6 +449,18 @@ richInput.AsyncDataTransferImporter = async data =>
 ```csharp
 richInput.PasteHandler = async context =>
 {
+    // context.Formats 可以直接用于日志和业务分流。
+    // context.ContainsFormat(...) 支持 DataFormat 或平台格式名。
+    if (context.ContainsFormat("com.myapp.order-card"))
+    {
+        var payload = await context.DataTransfer.TryGetTextAsync();
+        context.InsertContents(new[]
+        {
+            RichTextContent.FromCustom("订单卡片", ParseOrder(payload), "order-card")
+        });
+        return;
+    }
+
     // 返回且不设置 Handled：继续默认处理。
     // 用 CanInsert 覆盖 Bitmap、Win DIB、文件和富内容快照等默认富内容。
     if (richInput.CanInsert(context.DataTransfer))
@@ -505,6 +517,21 @@ richInput.DataObjectImporter = data =>
         new[] { RichTextContent.FromCustom("custom-payload", text) });
 };
 
+richInput.PasteHandler = context =>
+{
+    // Ava11 下 context.Formats 是 IDataObject.GetDataFormats() 的快照。
+    if (context.ContainsFormat("com.myapp.order-card"))
+    {
+        var text = context.DataObject.Get(DataFormats.Text) as string;
+        context.InsertContents(new[]
+        {
+            RichTextContent.FromCustom("订单卡片", ParseOrder(text), "order-card")
+        });
+    }
+
+    return Task.CompletedTask;
+};
+
 richInput.DropHandler = context =>
 {
     var fileNames = context.DataObject.GetFileNames();
@@ -516,7 +543,31 @@ richInput.DropHandler = context =>
 };
 ```
 
-Ava11/Ava12 都会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`、`Format17`；也识别 macOS pasteboard 常见图片格式，例如 `TIFF picture`、`PNGf`、`JPEG picture`、`GIF picture`、`BMP `、`TPIC`、`jp2 `、`8BPS`、`AVIF`。Ava11 从 `IDataObject` 读取，Ava12 从 `IDataTransfer/IAsyncDataTransfer` 的平台字节格式读取。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
+Ava11/Ava12 都会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`image/x-png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`、`Format17`；也识别 macOS pasteboard 常见图片格式，例如 `public.tiff`、`TIFF picture`、`NeXT TIFF v4.0 pasteboard type`、`PNGf`、`JPEG picture`、`GIF picture`、`BMP `、`TPIC`、`jp2 `、`8BPS`、`AVIF`、`WEBP`。Ava11 从 `IDataObject` 读取，Ava12 从 `IDataTransfer/IAsyncDataTransfer` 的平台字节格式读取。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
+
+平台图片剪贴板有几个默认兜底：
+
+- Windows 截图工具常给 `CF_DIB`、`CF_DIBV5` 或 `Format17`。这些是 DIB 数据，不是完整 BMP 文件，默认处理会补 BMP 文件头后再解码。
+- macOS 截图工具可能只给 `public.tiff` / `TIFF picture` / `NeXT TIFF v4.0 pasteboard type`，Avalonia/Skia 不一定能直接解 TIFF。默认处理会在 macOS 下用 AppKit 把这类图片 bytes 转成 PNG，再插入为图片。
+- 如果某个业务截图工具使用私有格式，先用 `PasteHandler` 检查数据格式；能走默认逻辑时调用 `context.UseDefault()`，不能走默认逻辑时再用 `context.InsertContents(...)` 插入自定义图片或卡片。
+
+如果要排查不同系统或截图工具实际给了什么格式，可以临时记录 `context.Formats`。确认格式后，把私有格式放在 `PasteHandler` / `DropHandler` 最前面处理；普通图片、DIB、文件仍交给 `UseDefault()` 或直接返回走默认逻辑：
+
+```csharp
+richInput.PasteHandler = context =>
+{
+    var formats = context.Formats; // Ava12 为 DataFormat 列表，Ava11 为字符串列表。
+
+    if (context.ContainsFormat("com.myapp.rich-message"))
+    {
+        context.InsertContents(ReadMyRichMessage(context));
+        return Task.CompletedTask;
+    }
+
+    context.UseDefault();
+    return Task.CompletedTask;
+};
+```
 
 ### 批量插入
 
