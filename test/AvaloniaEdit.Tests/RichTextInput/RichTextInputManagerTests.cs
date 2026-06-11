@@ -122,6 +122,26 @@ namespace AvaloniaEdit.Tests.RichTextInput
         }
 
         [AvaloniaTest]
+        public void PlainTypingInLargeRichDocumentReusesOrderedItemCache()
+        {
+            var textArea = CreateTextArea("start end");
+            var manager = RichTextInputManager.Install(textArea);
+            manager.InsertContents(6, Enumerable.Range(0, 500)
+                .Select(i => RichTextContent.FromCustom($"card-{i}", i)));
+
+            Assert.AreEqual(6, manager.GetFirstInterestedOffset(0));
+            var cacheBuilds = manager.ItemsCacheBuildCount;
+
+            for (var i = 0; i < 50; i++)
+            {
+                textArea.Document.Insert(0, "x");
+                Assert.AreEqual(7 + i, manager.GetFirstInterestedOffset(0));
+            }
+
+            Assert.AreEqual(cacheBuilds, manager.ItemsCacheBuildCount);
+        }
+
+        [AvaloniaTest]
         public void UndoRedoRestoresInsertedRichContentMetadata()
         {
             var textArea = CreateTextArea("ab");

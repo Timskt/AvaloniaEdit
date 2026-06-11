@@ -593,8 +593,11 @@ richInput.InsertContents(editor.TextArea.Caret.Offset, files.Select(file =>
 
 - 批量导入图片、附件、业务卡片时使用 `InsertContents`，避免逐项插入触发多次布局。
 - 持续输入时直接使用 `TextArea.Document` 或普通输入流程即可，不需要业务层手动刷新富内容列表。
+- 普通输入只会让锚点跟随移动，不会重排全部富内容；真正新增、删除或重建富内容时才会刷新内部顺序缓存。
 - 需要发送、保存、复制或展示时再调用 `GetValue()`、`GetSnapshot()`、`GetItemsInDocumentOrder()` 等 API，这些读取类 API 会做一次一致性清理，适合放在用户动作边界上。
+- 只处理局部内容时优先传 `ISegment`，例如 `GetValue(selectionSegment)`、`CreateSnapshot(selectionSegment)`、`GetPlainText(selectionSegment)`；它们会按范围定位富内容，避免在很长文档里扫描全部图片和卡片。
 - 大文档展示框和发送框宽度不一致时，继续用 `GetValue/SetValue` 复用数据；目标控件会按自己的宽度重新布局图片和自定义组件。
+- 自定义 `ElementFactory` 里避免同步解大图、读文件、访问网络或做复杂布局计算；缩略图、上传状态、业务数据建议提前放在 `RichTextContent.Value` / `Metadata`，控件只负责轻量渲染。
 
 ### 多选文件逐项处理
 

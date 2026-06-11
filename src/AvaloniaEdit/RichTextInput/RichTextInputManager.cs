@@ -786,6 +786,8 @@ namespace AvaloniaEdit.RichTextInput
 
         internal int InvalidItemValidationPassCount { get; private set; }
 
+        internal int ItemsCacheBuildCount { get; private set; }
+
         public bool ConvertImageFilesToImages { get; set; }
 
         public Func<RichTextContentItem, Control> ElementFactory { get; set; }
@@ -964,10 +966,18 @@ namespace AvaloniaEdit.RichTextInput
                 return Array.Empty<RichTextContentItem>();
 
             var segments = GetOrderedSelectionSegments();
-            return GetItemsInDocumentOrder()
-                .Where(item => segments.Any(segment =>
-                    item.Offset >= segment.StartOffset && item.EndOffset <= segment.EndOffset))
-                .ToArray();
+            RemoveInvalidItems();
+            var result = new List<RichTextContentItem>();
+            foreach (var segment in segments)
+            {
+                foreach (var item in GetItemsInRange(segment.StartOffset, segment.EndOffset))
+                {
+                    if (item.EndOffset <= segment.EndOffset)
+                        result.Add(item);
+                }
+            }
+
+            return result;
         }
 
         public bool RemoveContent(RichTextContentItem item)
@@ -1350,17 +1360,11 @@ namespace AvaloniaEdit.RichTextInput
             }
 
             RemoveInvalidItems();
-            var items = GetItemsInDocumentOrder();
             foreach (var segment in segments)
             {
                 var currentOffset = segment.StartOffset;
-                foreach (var item in items)
+                foreach (var item in GetItemsInRange(segment.StartOffset, segment.EndOffset))
                 {
-                    if (item.EndOffset <= currentOffset)
-                        continue;
-                    if (item.Offset >= segment.EndOffset)
-                        break;
-
                     if (item.Offset > currentOffset)
                         yield return new SimpleSegment(currentOffset, item.Offset - currentOffset);
 
@@ -1453,30 +1457,34 @@ namespace AvaloniaEdit.RichTextInput
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             segment ??= new SimpleSegment(0, document.TextLength);
             var text = document.GetText(segment);
-            var items = GetItemsInDocumentOrder()
-                .Where(item => item.Offset >= segment.Offset && item.Offset < segment.EndOffset)
-                .Select(item => new RichTextInputSnapshotItem
+            var rangeItems = GetItemsInRange(segment.Offset, segment.EndOffset, true);
+            var items = new RichTextInputSnapshotItem[rangeItems.Count];
+            for (var i = 0; i < rangeItems.Count; i++)
+            {
+                var item = rangeItems[i];
+                items[i] = new RichTextInputSnapshotItem
                 {
                     Offset = item.Offset - segment.Offset,
                     Kind = item.Content.Kind,
                     DisplayText = item.Content.DisplayText,
                     Source = item.Content.Source,
                     StyleKey = item.Content.StyleKey
-                })
-                .ToArray();
+                };
+            }
 
             if (!removeObjectReplacementCharacters)
                 return new RichTextInputSnapshot(text, items);
 
             var adjusted = text;
-            foreach (var item in items.OrderByDescending(item => item.Offset))
+            for (var i = items.Length - 1; i >= 0; i--)
             {
+                var item = items[i];
                 if (item.Offset >= 0 && item.Offset < adjusted.Length && adjusted[item.Offset] == ObjectReplacementCharacter)
                     adjusted = adjusted.Remove(item.Offset, 1);
             }
 
             var removedBefore = 0;
-            foreach (var item in items.OrderBy(item => item.Offset))
+            foreach (var item in items)
             {
                 item.Offset -= removedBefore;
                 removedBefore++;
@@ -1505,14 +1513,17 @@ namespace AvaloniaEdit.RichTextInput
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             segment ??= new SimpleSegment(0, document.TextLength);
             var text = document.GetText(segment);
-            var items = GetItemsInDocumentOrder()
-                .Where(item => item.Offset >= segment.Offset && item.Offset < segment.EndOffset)
-                .Select(item => new RichTextInputValueItem
+            var rangeItems = GetItemsInRange(segment.Offset, segment.EndOffset, true);
+            var items = new RichTextInputValueItem[rangeItems.Count];
+            for (var i = 0; i < rangeItems.Count; i++)
+            {
+                var item = rangeItems[i];
+                items[i] = new RichTextInputValueItem
                 {
                     Offset = item.Offset - segment.Offset,
                     Content = item.Content
-                })
-                .ToArray();
+                };
+            }
 
             return new RichTextInputValue(text, items);
         }
@@ -1670,13 +1681,11 @@ namespace AvaloniaEdit.RichTextInput
             segment ??= new SimpleSegment(0, document.TextLength);
             var text = document.GetText(segment);
             var builder = new System.Text.StringBuilder(text);
-            var items = GetItemsInDocumentOrder()
-                .Where(item => item.Offset >= segment.Offset && item.Offset < segment.EndOffset)
-                .OrderByDescending(item => item.Offset)
-                .ToArray();
+            var items = GetItemsInRange(segment.Offset, segment.EndOffset, true);
 
-            foreach (var item in items)
+            for (var i = items.Count - 1; i >= 0; i--)
             {
+                var item = items[i];
                 var relativeOffset = item.Offset - segment.Offset;
                 var replacement = contentTextFactory?.Invoke(item) ?? item.Content.DisplayText ?? string.Empty;
                 if (relativeOffset >= 0 && relativeOffset < builder.Length && builder[relativeOffset] == ObjectReplacementCharacter)
@@ -2431,7 +2440,6 @@ namespace AvaloniaEdit.RichTextInput
 
         private void Document_Changed(object sender, DocumentChangeEventArgs e)
         {
-            InvalidateItemsCache();
             var reanchored = ApplyPendingReanchors();
             if (IsInvalidItemValidationSuspended())
             {
@@ -2538,7 +2546,18 @@ namespace AvaloniaEdit.RichTextInput
 
         private IReadOnlyList<RichTextContentItem> GetItemsInRange(int startOffset, int endOffset)
         {
+            return GetItemsInRange(startOffset, endOffset, false);
+        }
+
+        private IReadOnlyList<RichTextContentItem> GetItemsInRange(int startOffset, int endOffset, bool validate)
+        {
             if (startOffset >= endOffset || _items.Count == 0)
+                return Array.Empty<RichTextContentItem>();
+
+            if (validate)
+                RemoveInvalidItems();
+
+            if (_items.Count == 0)
                 return Array.Empty<RichTextContentItem>();
 
             var items = GetOrderedItemsCache();
@@ -2604,7 +2623,10 @@ namespace AvaloniaEdit.RichTextInput
         private RichTextContentItem[] GetOrderedItemsCache()
         {
             if (_orderedItemsCache == null)
+            {
                 _orderedItemsCache = _items.OrderBy(item => item.Offset).ToArray();
+                ItemsCacheBuildCount++;
+            }
 
             return _orderedItemsCache;
         }
