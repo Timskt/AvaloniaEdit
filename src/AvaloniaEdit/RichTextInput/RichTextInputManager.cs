@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -626,12 +627,44 @@ namespace AvaloniaEdit.RichTextInput
             ".csv", ".doc", ".docx", ".md", ".pdf", ".ppt", ".pptx", ".txt", ".xls", ".xlsx"
         };
 
+        private static readonly string[] BitmapDataFormatIdentifiers =
+        {
+            "Bitmap",
+            "image/png",
+            "image/jpeg",
+            "image/jpg",
+            "image/bmp",
+            "image/gif",
+            "image/tiff",
+            "PNG",
+            "JFIF",
+            "JPEG",
+            "TIFF",
+            "public.png",
+            "public.jpeg",
+            "public.tiff",
+            "System.Drawing.Bitmap",
+            "DeviceIndependentBitmap",
+            "CF_DIB",
+            "CF_DIBV5",
+            "Format17"
+        };
+
+        private static readonly DataFormat<byte[]>[] BitmapByteDataFormats =
+            BitmapDataFormatIdentifiers
+                .Select(DataFormat.CreateBytesPlatformFormat)
+                .ToArray();
+
         private readonly TextArea _textArea;
         private readonly RichTextInlineObjectGenerator _generator;
         private readonly List<RichTextContentItem> _items = new List<RichTextContentItem>();
         private readonly List<PendingRichContentReanchor> _pendingReanchors = new List<PendingRichContentReanchor>();
         private readonly Dictionary<string, Func<RichTextElementFactoryContext, Control>> _elementFactories =
             new Dictionary<string, Func<RichTextElementFactoryContext, Control>>(StringComparer.Ordinal);
+        private RichTextContentItem[] _orderedItemsCache;
+        private int _deferRedrawCount;
+        private int _suspendInvalidItemValidationCount;
+        private bool _redrawPending;
         private bool _suppressTextSelectionBackgroundForRichContent = true;
         private bool _isDisposed;
 
@@ -764,13 +797,16 @@ namespace AvaloniaEdit.RichTextInput
 
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             RichTextContentItem item;
+            var offset = _textArea.Caret.Offset;
             using (document.RunUpdate())
+            using (DeferRedraw())
+            using (SuspendInvalidItemValidation())
             {
                 if (!_textArea.Selection.IsEmpty)
                     _textArea.RemoveSelectedText();
 
-                var offset = _textArea.Caret.Offset;
-                item = InsertContent(offset, content);
+                offset = _textArea.Caret.Offset;
+                item = InsertContentCore(offset, content);
                 _textArea.Caret.Offset = offset + ObjectReplacementString.Length;
                 _textArea.ClearSelection();
             }
@@ -822,7 +858,7 @@ namespace AvaloniaEdit.RichTextInput
         public IReadOnlyList<RichTextContentItem> GetItemsInDocumentOrder()
         {
             RemoveInvalidItems();
-            return _items.OrderBy(item => item.Offset).ToArray();
+            return GetOrderedItemsCache().ToArray();
         }
 
         public IReadOnlyList<RichTextContentItem> GetSelectedItems()
@@ -855,12 +891,51 @@ namespace AvaloniaEdit.RichTextInput
 
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             using (document.RunUpdate())
+            using (DeferRedraw())
+            using (SuspendInvalidItemValidation())
             {
-                document.Insert(offset, ObjectReplacementString, AnchorMovementType.BeforeInsertion);
-                var item = AddItem(offset, content);
-                if (document.UndoStack.AcceptChanges)
-                    document.UndoStack.Push(new RichTextContentUndoOperation(this, content, offset, true, item));
-                return item;
+                return InsertContentCore(offset, content);
+            }
+        }
+
+        public IReadOnlyList<RichTextContentItem> InsertContents(IEnumerable<RichTextContent> contents)
+        {
+            var contentList = NormalizeContents(contents);
+            if (contentList.Count == 0)
+                return Array.Empty<RichTextContentItem>();
+
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            IReadOnlyList<RichTextContentItem> items;
+            var offset = _textArea.Caret.Offset;
+            using (document.RunUpdate())
+            using (DeferRedraw())
+            using (SuspendInvalidItemValidation())
+            {
+                if (!_textArea.Selection.IsEmpty)
+                    _textArea.RemoveSelectedText();
+
+                offset = _textArea.Caret.Offset;
+                items = InsertContentsCore(offset, contentList);
+                _textArea.Caret.Offset = offset + items.Count;
+                _textArea.ClearSelection();
+            }
+
+            FinalizeCaretAfterInsertion();
+            return items;
+        }
+
+        public IReadOnlyList<RichTextContentItem> InsertContents(int offset, IEnumerable<RichTextContent> contents)
+        {
+            var contentList = NormalizeContents(contents);
+            if (contentList.Count == 0)
+                return Array.Empty<RichTextContentItem>();
+
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            using (document.RunUpdate())
+            using (DeferRedraw())
+            using (SuspendInvalidItemValidation())
+            {
+                return InsertContentsCore(offset, contentList);
             }
         }
 
@@ -956,22 +1031,23 @@ namespace AvaloniaEdit.RichTextInput
 
         public bool TryGetItem(int offset, out RichTextContentItem item)
         {
-            RemoveInvalidItems();
-            item = _items.FirstOrDefault(i => i.Offset == offset);
-            return item != null;
+            var index = FindItemIndexAtOrAfter(offset);
+            var items = GetOrderedItemsCache();
+            if (index >= 0 && index < items.Length && items[index].Offset == offset)
+            {
+                item = items[index];
+                return true;
+            }
+
+            item = null;
+            return false;
         }
 
         public int GetFirstInterestedOffset(int startOffset)
         {
-            RemoveInvalidItems();
-            var offset = int.MaxValue;
-            foreach (var item in _items)
-            {
-                if (item.Offset >= startOffset && item.Offset < offset)
-                    offset = item.Offset;
-            }
-
-            return offset == int.MaxValue ? -1 : offset;
+            var index = FindItemIndexAtOrAfter(startOffset);
+            var items = GetOrderedItemsCache();
+            return index >= 0 && index < items.Length ? items[index].Offset : -1;
         }
 
         public Control CreateElement(RichTextContentItem item)
@@ -1062,7 +1138,7 @@ namespace AvaloniaEdit.RichTextInput
                 return false;
 
             return CanImportDataTransfer?.Invoke(dataTransfer) == true
-                || dataTransfer.Contains(DataFormat.Bitmap)
+                || ContainsBitmapData(dataTransfer)
                 || dataTransfer.Contains(DataFormat.File)
                 || dataTransfer.Contains(RichTextClipboardFormat);
         }
@@ -1073,7 +1149,7 @@ namespace AvaloniaEdit.RichTextInput
                 return false;
 
             return CanImportAsyncDataTransfer?.Invoke(dataTransfer) == true
-                || dataTransfer.Contains(DataFormat.Bitmap)
+                || ContainsBitmapData(dataTransfer)
                 || dataTransfer.Contains(DataFormat.File)
                 || dataTransfer.Contains(RichTextClipboardFormat);
         }
@@ -1230,7 +1306,7 @@ namespace AvaloniaEdit.RichTextInput
             }
             else
             {
-                var bitmap = dataTransfer.TryGetBitmap();
+                var bitmap = TryGetBitmap(dataTransfer);
                 if (bitmap != null)
                     contents.Add(RichTextContent.FromImage(bitmap));
             }
@@ -1267,7 +1343,7 @@ namespace AvaloniaEdit.RichTextInput
             }
             else
             {
-                var bitmap = await dataTransfer.TryGetBitmapAsync();
+                var bitmap = await TryGetBitmapAsync(dataTransfer);
                 if (bitmap != null)
                     contents.Add(RichTextContent.FromImage(bitmap));
             }
@@ -1417,8 +1493,11 @@ namespace AvaloniaEdit.RichTextInput
 
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             using (document.RunUpdate())
+            using (DeferRedraw())
+            using (SuspendInvalidItemValidation())
             {
                 _items.Clear();
+                InvalidateItemsCache();
                 document.Text = value.Text ?? string.Empty;
                 foreach (var valueItem in value.Items.OrderBy(item => item.Offset))
                 {
@@ -1436,7 +1515,7 @@ namespace AvaloniaEdit.RichTextInput
                 _textArea.ClearSelection();
             }
 
-            _textArea.TextView.Redraw();
+            RequestRedraw();
         }
 
         public bool SetSnapshot(RichTextInputSnapshot snapshot)
@@ -1446,8 +1525,11 @@ namespace AvaloniaEdit.RichTextInput
 
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             using (document.RunUpdate())
+            using (DeferRedraw())
+            using (SuspendInvalidItemValidation())
             {
                 _items.Clear();
+                InvalidateItemsCache();
                 document.Text = snapshot.Text ?? string.Empty;
                 foreach (var snapshotItem in (snapshot.Items ?? Array.Empty<RichTextInputSnapshotItem>()).OrderBy(item => item.Offset))
                 {
@@ -1465,7 +1547,7 @@ namespace AvaloniaEdit.RichTextInput
                 _textArea.ClearSelection();
             }
 
-            _textArea.TextView.Redraw();
+            RequestRedraw();
             FinalizeCaretAfterInsertion();
             return true;
         }
@@ -1561,6 +1643,8 @@ namespace AvaloniaEdit.RichTextInput
 
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             using (document.RunUpdate())
+            using (DeferRedraw())
+            using (SuspendInvalidItemValidation())
             {
                 if (replaceSelection && !_textArea.Selection.IsEmpty)
                 {
@@ -1598,11 +1682,14 @@ namespace AvaloniaEdit.RichTextInput
 
         private bool InsertContents(int offset, bool replaceSelection, IList<RichTextContent> contents)
         {
-            if (contents == null || contents.Count == 0)
+            var contentList = NormalizeContents(contents);
+            if (contentList.Count == 0)
                 return false;
 
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             using (document.RunUpdate())
+            using (DeferRedraw())
+            using (SuspendInvalidItemValidation())
             {
                 if (replaceSelection && !_textArea.Selection.IsEmpty)
                 {
@@ -1610,17 +1697,50 @@ namespace AvaloniaEdit.RichTextInput
                     offset = _textArea.Caret.Offset;
                 }
 
-                foreach (var content in contents)
-                {
-                    InsertContent(offset, content);
-                    offset += ObjectReplacementString.Length;
-                }
+                InsertContentsCore(offset, contentList);
+                offset += contentList.Count;
             }
 
             _textArea.Caret.Offset = offset;
             _textArea.ClearSelection();
             FinalizeCaretAfterInsertion();
             return true;
+        }
+
+        private RichTextContentItem InsertContentCore(int offset, RichTextContent content)
+        {
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            document.Insert(offset, ObjectReplacementString, AnchorMovementType.BeforeInsertion);
+            var item = AddItem(offset, content);
+            if (document.UndoStack.AcceptChanges)
+                document.UndoStack.Push(new RichTextContentUndoOperation(this, content, offset, true, item));
+            return item;
+        }
+
+        private IReadOnlyList<RichTextContentItem> InsertContentsCore(int offset, IList<RichTextContent> contents)
+        {
+            var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
+            document.Insert(offset, new string(ObjectReplacementCharacter, contents.Count), AnchorMovementType.BeforeInsertion);
+
+            var items = new List<RichTextContentItem>(contents.Count);
+            for (var i = 0; i < contents.Count; i++)
+            {
+                var itemOffset = offset + i;
+                var content = contents[i];
+                var item = AddItem(itemOffset, content);
+                items.Add(item);
+                if (document.UndoStack.AcceptChanges)
+                    document.UndoStack.Push(new RichTextContentUndoOperation(this, content, itemOffset, true, item));
+            }
+
+            return items;
+        }
+
+        private static IList<RichTextContent> NormalizeContents(IEnumerable<RichTextContent> contents)
+        {
+            return contents?
+                .Where(content => content != null)
+                .ToArray() ?? Array.Empty<RichTextContent>();
         }
 
         private bool InsertText(int offset, bool replaceSelection, string text)
@@ -1722,12 +1842,253 @@ namespace AvaloniaEdit.RichTextInput
             }
         }
 
+        private static bool ContainsBitmapData(IDataTransfer dataTransfer)
+        {
+            if (dataTransfer == null)
+                return false;
+
+            return dataTransfer.Contains(DataFormat.Bitmap)
+                || dataTransfer.Formats.Any(IsBitmapDataFormat)
+                || BitmapByteDataFormats.Any(format => dataTransfer.Contains(format));
+        }
+
+        private static bool ContainsBitmapData(IAsyncDataTransfer dataTransfer)
+        {
+            if (dataTransfer == null)
+                return false;
+
+            return dataTransfer.Contains(DataFormat.Bitmap)
+                || dataTransfer.Formats.Any(IsBitmapDataFormat)
+                || BitmapByteDataFormats.Any(format => dataTransfer.Contains(format));
+        }
+
+        private static Bitmap TryGetBitmap(IDataTransfer dataTransfer)
+        {
+            if (dataTransfer == null)
+                return null;
+
+            try
+            {
+                var bitmap = dataTransfer.TryGetBitmap();
+                if (bitmap != null)
+                    return bitmap;
+            }
+            catch
+            {
+            }
+
+            foreach (var item in dataTransfer.Items)
+            {
+                var bitmap = TryGetBitmap(item);
+                if (bitmap != null)
+                    return bitmap;
+            }
+
+            return null;
+        }
+
+        private static async Task<Bitmap> TryGetBitmapAsync(IAsyncDataTransfer dataTransfer)
+        {
+            if (dataTransfer == null)
+                return null;
+
+            try
+            {
+                var bitmap = await dataTransfer.TryGetBitmapAsync();
+                if (bitmap != null)
+                    return bitmap;
+            }
+            catch
+            {
+            }
+
+            foreach (var item in dataTransfer.Items)
+            {
+                var bitmap = await TryGetBitmapAsync(item);
+                if (bitmap != null)
+                    return bitmap;
+            }
+
+            return null;
+        }
+
+        private static Bitmap TryGetBitmap(IDataTransferItem item)
+        {
+            if (item == null)
+                return null;
+
+            foreach (var format in GetBitmapDataFormats(item.Formats))
+            {
+                try
+                {
+                    var bitmap = TryCreateBitmap(item.TryGetRaw(format), IsDibDataFormat(format));
+                    if (bitmap != null)
+                        return bitmap;
+                }
+                catch
+                {
+                }
+            }
+
+            return null;
+        }
+
+        private static async Task<Bitmap> TryGetBitmapAsync(IAsyncDataTransferItem item)
+        {
+            if (item == null)
+                return null;
+
+            foreach (var format in GetBitmapDataFormats(item.Formats))
+            {
+                try
+                {
+                    var bitmap = TryCreateBitmap(await item.TryGetRawAsync(format), IsDibDataFormat(format));
+                    if (bitmap != null)
+                        return bitmap;
+                }
+                catch
+                {
+                }
+            }
+
+            return null;
+        }
+
+        private static IEnumerable<DataFormat> GetBitmapDataFormats(IEnumerable<DataFormat> formats)
+        {
+            return (formats ?? Array.Empty<DataFormat>())
+                .Where(IsBitmapDataFormat)
+                .Concat(BitmapByteDataFormats)
+                .Distinct();
+        }
+
+        private static Bitmap TryCreateBitmap(object value, bool isDib)
+        {
+            switch (value)
+            {
+                case Bitmap bitmap:
+                    return bitmap;
+                case Stream stream:
+                    if (stream.CanSeek)
+                        stream.Position = 0;
+                    return TryCreateBitmap(stream, isDib);
+                case byte[] bytes:
+                    return TryCreateBitmap(bytes, isDib);
+                default:
+                    return null;
+            }
+        }
+
+        private static Bitmap TryCreateBitmap(Stream stream, bool isDib)
+        {
+            using (var memory = new MemoryStream())
+            {
+                stream.CopyTo(memory);
+                return TryCreateBitmap(memory.ToArray(), isDib);
+            }
+        }
+
+        private static Bitmap TryCreateBitmap(byte[] bytes, bool isDib)
+        {
+            if (bytes == null || bytes.Length == 0)
+                return null;
+
+            if (isDib && !HasBmpFileHeader(bytes))
+            {
+                var bmpBytes = CreateBmpBytesFromDib(bytes);
+                using (var memory = new MemoryStream(bmpBytes))
+                    return new Bitmap(memory);
+            }
+
+            using (var memory = new MemoryStream(bytes))
+                return new Bitmap(memory);
+        }
+
+        private static bool HasBmpFileHeader(byte[] bytes)
+        {
+            return bytes.Length >= 2 && bytes[0] == (byte)'B' && bytes[1] == (byte)'M';
+        }
+
+        private static byte[] CreateBmpBytesFromDib(byte[] dibBytes)
+        {
+            if (dibBytes.Length < 4)
+                throw new InvalidDataException("DIB data is too small.");
+
+            var headerSize = BinaryPrimitives.ReadInt32LittleEndian(dibBytes.AsSpan(0, 4));
+            if (headerSize <= 0 || headerSize > dibBytes.Length)
+                throw new InvalidDataException("Invalid DIB header size.");
+
+            var colorTableSize = GetDibColorTableSize(dibBytes, headerSize);
+            var pixelOffset = 14 + headerSize + colorTableSize;
+            var fileSize = 14 + dibBytes.Length;
+            var bmpBytes = new byte[fileSize];
+            bmpBytes[0] = (byte)'B';
+            bmpBytes[1] = (byte)'M';
+            BinaryPrimitives.WriteInt32LittleEndian(bmpBytes.AsSpan(2, 4), fileSize);
+            BinaryPrimitives.WriteInt32LittleEndian(bmpBytes.AsSpan(10, 4), pixelOffset);
+            Buffer.BlockCopy(dibBytes, 0, bmpBytes, 14, dibBytes.Length);
+            return bmpBytes;
+        }
+
+        private static int GetDibColorTableSize(byte[] dibBytes, int headerSize)
+        {
+            if (headerSize == 12)
+            {
+                if (dibBytes.Length < 12)
+                    return 0;
+
+                var bitsPerPixel = BinaryPrimitives.ReadUInt16LittleEndian(dibBytes.AsSpan(10, 2));
+                return bitsPerPixel <= 8 ? (1 << bitsPerPixel) * 3 : 0;
+            }
+
+            if (dibBytes.Length < 36)
+                return 0;
+
+            var bitCount = BinaryPrimitives.ReadUInt16LittleEndian(dibBytes.AsSpan(14, 2));
+            var compression = BinaryPrimitives.ReadUInt32LittleEndian(dibBytes.AsSpan(16, 4));
+            var colorsUsed = BinaryPrimitives.ReadUInt32LittleEndian(dibBytes.AsSpan(32, 4));
+            var colorCount = colorsUsed != 0 || bitCount > 8 ? colorsUsed : 1u << bitCount;
+            var maskSize = headerSize == 40
+                ? compression == 6 ? 16 : compression == 3 ? 12 : 0
+                : 0;
+            return checked((int)colorCount * 4 + maskSize);
+        }
+
+        private static bool IsDibDataFormat(DataFormat format)
+        {
+            return format != null && IsDibDataFormat(format.Identifier);
+        }
+
+        private static bool IsDibDataFormat(string format)
+        {
+            return string.Equals(format, "DeviceIndependentBitmap", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(format, "CF_DIB", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(format, "CF_DIBV5", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(format, "Format17", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsBitmapDataFormat(DataFormat format)
+        {
+            return format == DataFormat.Bitmap
+                || (format != null && IsBitmapDataFormat(format.Identifier));
+        }
+
+        private static bool IsBitmapDataFormat(string format)
+        {
+            if (string.IsNullOrWhiteSpace(format))
+                return false;
+
+            return BitmapDataFormatIdentifiers.Any(known =>
+                string.Equals(known, format, StringComparison.OrdinalIgnoreCase));
+        }
+
         private void TextArea_DocumentChanged(object sender, DocumentChangedEventArgs e)
         {
             DetachFromDocument(e.OldDocument);
             _items.Clear();
+            InvalidateItemsCache();
             AttachToDocument(e.NewDocument);
-            _textArea.TextView.Redraw();
+            RequestRedraw();
         }
 
         private void TextView_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1914,9 +2275,17 @@ namespace AvaloniaEdit.RichTextInput
 
         private void Document_Changed(object sender, DocumentChangeEventArgs e)
         {
+            InvalidateItemsCache();
             var reanchored = ApplyPendingReanchors();
+            if (IsInvalidItemValidationSuspended())
+            {
+                if (reanchored || ShouldRebuildRichContentVisuals(e))
+                    RequestRedraw();
+                return;
+            }
+
             if (RemoveInvalidItems() || reanchored || ShouldRebuildRichContentVisuals(e))
-                _textArea.TextView.Redraw();
+                RequestRedraw();
         }
 
         private IReadOnlyList<int> GetReanchorOffsets(DocumentChangeEventArgs e, int removedItemCount)
@@ -2000,6 +2369,7 @@ namespace AvaloniaEdit.RichTextInput
                     || document.GetCharAt(item.Offset) != ObjectReplacementCharacter)
                 {
                     _items.RemoveAt(i);
+                    InvalidateItemsCache();
                     removed = true;
                 }
             }
@@ -2021,14 +2391,87 @@ namespace AvaloniaEdit.RichTextInput
                 .ToArray();
         }
 
+        private IDisposable DeferRedraw()
+        {
+            _deferRedrawCount++;
+            return new CallbackOnDispose(() =>
+            {
+                _deferRedrawCount--;
+                if (_deferRedrawCount == 0 && _redrawPending)
+                {
+                    _redrawPending = false;
+                    _textArea.TextView.Redraw();
+                }
+            });
+        }
+
+        private IDisposable SuspendInvalidItemValidation()
+        {
+            _suspendInvalidItemValidationCount++;
+            return new CallbackOnDispose(() => _suspendInvalidItemValidationCount--);
+        }
+
+        private bool IsInvalidItemValidationSuspended()
+        {
+            return _suspendInvalidItemValidationCount > 0;
+        }
+
+        private void RequestRedraw()
+        {
+            if (_deferRedrawCount > 0)
+            {
+                _redrawPending = true;
+                return;
+            }
+
+            _textArea.TextView.Redraw();
+        }
+
+        private void InvalidateItemsCache()
+        {
+            _orderedItemsCache = null;
+        }
+
+        private RichTextContentItem[] GetOrderedItemsCache()
+        {
+            if (_orderedItemsCache == null)
+                _orderedItemsCache = _items.OrderBy(item => item.Offset).ToArray();
+
+            return _orderedItemsCache;
+        }
+
+        private int FindItemIndexAtOrAfter(int offset)
+        {
+            var items = GetOrderedItemsCache();
+            var low = 0;
+            var high = items.Length - 1;
+            var result = -1;
+            while (low <= high)
+            {
+                var middle = low + ((high - low) / 2);
+                if (items[middle].Offset >= offset)
+                {
+                    result = middle;
+                    high = middle - 1;
+                }
+                else
+                {
+                    low = middle + 1;
+                }
+            }
+
+            return result;
+        }
+
         private RichTextContentItem AddItem(int offset, RichTextContent content, bool raiseEvent = true)
         {
             var document = _textArea.Document ?? throw ThrowUtil.NoDocumentAssigned();
             var item = new RichTextContentItem(content, new AnchorSegment(document, offset, ObjectReplacementString.Length));
             _items.Add(item);
+            InvalidateItemsCache();
             if (raiseEvent)
                 ContentInserted?.Invoke(this, new RichTextContentChangedEventArgs(item));
-            _textArea.TextView.Redraw();
+            RequestRedraw();
             return item;
         }
 
@@ -2046,8 +2489,9 @@ namespace AvaloniaEdit.RichTextInput
         {
             if (item != null && _items.Remove(item))
             {
+                InvalidateItemsCache();
                 ContentRemoved?.Invoke(this, new RichTextContentChangedEventArgs(item));
-                _textArea.TextView.Redraw();
+                RequestRedraw();
             }
         }
 

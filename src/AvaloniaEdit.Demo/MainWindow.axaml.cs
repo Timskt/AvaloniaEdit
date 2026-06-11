@@ -546,8 +546,7 @@ namespace AvaloniaEdit.Demo
         private async Task RichTextInputManager_PasteHandler(RichTextPasteContext context)
         {
             if (context.DataTransfer.Contains(RichTextInputManager.RichTextClipboardFormat)
-                || context.DataTransfer.Contains(DataFormat.Bitmap)
-                || context.DataTransfer.Contains(DataFormat.File))
+                || _richTextInputManager.CanInsert(context.DataTransfer))
             {
                 context.UseDefault();
                 return;

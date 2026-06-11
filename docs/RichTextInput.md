@@ -450,7 +450,8 @@ richInput.AsyncDataTransferImporter = async data =>
 richInput.PasteHandler = async context =>
 {
     // 返回且不设置 Handled：继续默认处理。
-    if (context.DataTransfer.Contains(DataFormat.Bitmap))
+    // 用 CanInsert 覆盖 Bitmap、Win DIB、文件和富内容快照等默认富内容。
+    if (richInput.CanInsert(context.DataTransfer))
         return;
 
     var text = await context.DataTransfer.TryGetTextAsync();
@@ -515,7 +516,23 @@ richInput.DropHandler = context =>
 };
 ```
 
-Ava11 会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
+Ava11/Ava12 都会额外识别 Win10 截图常见的 bitmap 剪贴板格式，例如 `Bitmap`、`image/png`、`PNG`、`DeviceIndependentBitmap`、`CF_DIB`、`CF_DIBV5`、`Format17`。Ava11 从 `IDataObject` 读取，Ava12 从 `IDataTransfer/IAsyncDataTransfer` 的平台字节格式读取。如果读取到 `Bitmap`、图片 `Stream` 或 `byte[]`，会按图片内容插入；读取失败时继续走文件、文件名或业务自定义 importer。
+
+### 批量插入
+
+程序主动插入多个文件、emoji、图片或业务卡片时，优先用 `InsertContents`。它会一次性插入占位符并批量挂载富内容，避免大量自定义组件逐个插入时频繁触发布局和重绘：
+
+```csharp
+richInput.InsertContents(new[]
+{
+    RichTextContent.FromCustom("@全体成员", allMembers, "mention-all"),
+    RichTextContent.FromEmoji("👍"),
+    RichTextContent.FromCustom("订单 #1001", order, "order-card")
+});
+
+richInput.InsertContents(editor.TextArea.Caret.Offset, files.Select(file =>
+    RichTextContent.FromFile(file)));
+```
 
 ### 多选文件逐项处理
 
